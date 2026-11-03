@@ -15,6 +15,7 @@ from live_speakers import LiveSpeakerProcess, apply_live_edits, speaker_ranges
 from recognition_models import ALLOWED_MODELS, GRANITE_MODEL, HAAS_MODEL, recognition_language, live_recognizer_type
 from user_data import data_path
 from speech_gate import SpeechGate, overlaps_speech, keep_spoken_rows
+from speech_preferences import profile as speech_profile, read_control as speech_control
 
 def next_live_chunk(chunks, pending, max_samples):
     """Catch up by joining queued audio, never dropping unrecognized speech."""
@@ -33,7 +34,7 @@ def next_live_chunk(chunks, pending, max_samples):
         b = following[1]
     return a, b, core
 
-def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=None, speech=None):
+def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=None, speech=None, sensitivity='balanced'):
     """Reuse concurrent recognition for one voice; retain exact cuts for turn changes."""
     result = prefetched.result() if prefetched is not None else None
     rows = []
@@ -41,7 +42,7 @@ def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=No
         pa, pb = max(a, round(part["start"] * RATE)), min(b, round(part["end"] * RATE))
         if pb <= core:
             continue
-        if speech is not None and not overlaps_speech(speech, max(core, pa), pb):
+        if speech is not None and not overlaps_speech(speech, max(core, pa), pb, sensitivity):
             continue
         if result is None or pa != a or pb != b:
             current_result = recognizer.transcribe(pcm[(pa - a) * 2:(pb - a) * 2])
@@ -49,7 +50,7 @@ def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=No
             current_result = result
         current = live_rows(current_result, pa, pb, max(core, pa), previous + rows)
         if speech is not None:
-            current = keep_spoken_rows(current, speech)
+            current = keep_spoken_rows(current, speech, sensitivity)
         for row in current:
             row.update(speaker=part["speaker"], speaker_review=part.get("speaker_review", False))
         rows.extend(current)
@@ -122,6 +123,7 @@ def run_live(request, job, models=None):
     if model not in ALLOWED_MODELS or request.get("language", "ja") not in {"ja", "en", "auto"}:
         raise ValueError("認識設定が正しくありません。")
     seconds = max(2, min(10, int(request.get("chunk_seconds", 2))))
+    sensitivity = speech_profile(request.get('speech_sensitivity', 'balanced')).key
     prompt = str(request.get("prompt", ""))[:1000]
     rules = normalize_rules(request.get("correction_rules", []))
     if rules:
@@ -165,9 +167,25 @@ def run_live(request, job, models=None):
     speech_gate = models.speech if models else SpeechGate(ROOT / 'models')
     data['speech_filter'] = {'engine': 'silero-v5/cpu', 'skipped_chunks': 0}
     speech_warning = ''
+    speech_applied = None
     data['noise_reduction'] = {'model': REPO, 'revision': REVISION, 'recording_audio': 'original',
                                'applied_chunks': 0, 'bypassed_chunks': 0}
     noise_state = None
+
+    def service_speech():
+        nonlocal sensitivity, speech_applied
+        sensitivity = speech_control(job / 'speech-control.json', sensitivity)
+        if sensitivity != speech_applied:
+            speech_gate.configure(sensitivity)
+            # Normal Stop still drains recorded chunks; only initial preparation
+            # or application exit should cancel a detector change mid-session.
+            cancelled = stopped if capture is None else (models.closing if models else lambda: False)
+            speech_gate.prepare(lambda text: emit('status', text=text), cancelled)
+            if capture:
+                capture.set_sensitivity(sensitivity)
+            data['speech_filter']['sensitivity'] = sensitivity
+            speech_applied = sensitivity
+            emit('live_speech_status', sensitivity=sensitivity)
 
     def service_noise():
         nonlocal noise_state
@@ -216,7 +234,7 @@ def run_live(request, job, models=None):
             recognizer = recognizer_type(model, data["language"], prompt, request.get("compute", "auto"), job,
                                         status, stopped)
         noise.prepare(request.get('live_noise', False), request.get('compute', 'auto'), status, stopped)
-        speech_gate.prepare(status, stopped)
+        service_speech()
         service_noise()
         if live_speakers:
             emit("status", text="リアルタイム話者判別を準備中…")
@@ -250,6 +268,7 @@ def run_live(request, job, models=None):
             recorder = ScreenRecorder(selected, folder, stopped, lambda text: emit("live_recording_status", text=text))
         capture = LoopbackCapture(request["device"], wav, chunks, stopped, seconds,
                                    lambda **values: emit("live_meter", **values))
+        capture.set_sensitivity(sensitivity, job / 'speech-control.json')
         capture.start()
         inference = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-asr")
         deadline = time.monotonic() + 15
@@ -271,6 +290,7 @@ def run_live(request, job, models=None):
         limit = float(request.get("max_seconds", 0))
         while True:
             service_noise()
+            service_speech()
             service_context()
             if limit and time.monotonic() - start_time >= limit:
                 capture.stop()
@@ -301,7 +321,7 @@ def run_live(request, job, models=None):
                     emit('warning', title='発話判定', message=speech_warning)
             # Never ask the ASR to invent text for silence/noise, including an
             # almost-silent result from Nemotron or speech only in old context.
-            if not overlaps_speech(speech, max(a, core), b):
+            if not overlaps_speech(speech, max(a, core), b, sensitivity):
                 data['speech_filter']['skipped_chunks'] += 1
                 data['duration'] = capture.total / RATE
                 write_json(folder / 'result.json', data)
@@ -338,7 +358,7 @@ def run_live(request, job, models=None):
                       [{"start": a / RATE, "end": b / RATE, "speaker": "", "speaker_review": False}])
             previous = list(data["segments"])
             lag = max(0, capture.total / RATE - b / RATE)
-            for rows, part in recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched, speech):
+            for rows, part in recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched, speech, sensitivity):
                 for row in rows:
                     row['noise_reduced'] = noise_applied
                 if live_speakers:

@@ -26,7 +26,7 @@ SEGMENTATION_SHA256 = '220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e9
 SPEAKER_RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/'
 SETUP_INPUTS = ('setup_local.py', 'run.py', 'requirements.txt', 'requirements-lock.txt',
                 'whisper_hf_manifest.json', 'granite_model_manifest.json', 'haas_model_manifest.json',
-                'reuse_assets.py', 'reuse_model/config.json', 'speech_gate.py')
+                'reuse_assets.py', 'reuse_model/config.json', 'speech_gate.py', 'speech_preferences.py')
 
 
 def fingerprint(root=ROOT):

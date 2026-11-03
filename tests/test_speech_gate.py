@@ -138,6 +138,7 @@ class LiveSilencePipeline(unittest.TestCase):
                 source = tone(1, .01) + tone(1, .04) + tone(1, .01)
                 events, calls = [], []
                 class Capture:
+                    def set_sensitivity(self, *args): pass
                     def __init__(self, device, wav, chunks, stopped, seconds, meter):
                         self.total, self.error = 48000, None
                         self.ready, self.done = threading.Event(), threading.Event()

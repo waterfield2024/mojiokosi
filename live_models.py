@@ -89,6 +89,7 @@ class LiveModels:
         if stopped():
             raise LiveStopped()
         self.proofreader_for(request)
+        self.speech.configure(request.get('speech_sensitivity', 'balanced'))
         self.speech.prepare(status, stopped)
         noise = self.noise.prepare(request.get('live_noise', False), request.get('compute', 'auto'), status, stopped)
         return {**self.info(), 'speaker_warning': warning, 'noise': noise}

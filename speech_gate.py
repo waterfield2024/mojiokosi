@@ -6,6 +6,7 @@ import urllib.request
 import uuid
 
 import numpy as np
+from speech_preferences import profile
 
 RATE = 16000
 REVISION = '5cd2ba54db059f961e7545d4f211b44f005a6dfb'  # official Silero VAD v5.0
@@ -41,7 +42,7 @@ def ensure_vad(models, status=lambda text: None, stopped=lambda: False):
     return target
 
 
-def audible(samples):
+def audible(samples, sensitivity='balanced'):
     """Ignore digital silence, DC offsets and rounding residue; retain quiet speech."""
     if len(samples) < 2:
         return False
@@ -49,30 +50,38 @@ def audible(samples):
     padded = np.pad(samples, (0, (-len(samples)) % 320))
     frames = padded.reshape(-1, 320)
     centered = frames - frames.mean(axis=1, keepdims=True)
-    return np.count_nonzero(np.mean(centered*centered, axis=1) >= (8/32768)**2) >= 2
+    choice = profile(sensitivity)
+    return np.count_nonzero(np.mean(centered*centered, axis=1) >= (choice.floor_rms/32768)**2) >= choice.active_frames
 
 
-def overlaps_speech(intervals, start, end):
+def overlaps_speech(intervals, start, end, sensitivity='balanced'):
     """Coordinates are 16 kHz samples; do not reuse speech in an old overlap."""
     if end <= start:
         return False
     overlap = sum(max(0, min(end, b)-max(start, a)) for a, b in intervals)
-    return overlap >= min(640, end-start)
+    return overlap >= min(profile(sensitivity).overlap_samples, end-start)
 
 
-def keep_spoken_rows(rows, intervals):
+def keep_spoken_rows(rows, intervals, sensitivity='balanced'):
     # ASR timestamps can drift by a few frames. This small tolerance does not
     # authorize subtitles elsewhere in a long silent tail.
     return [row for row in rows if overlaps_speech(intervals,
-            round(row['start']*RATE)-2400, round(row['end']*RATE)+2400)]
+            round(row['start']*RATE)-2400, round(row['end']*RATE)+2400, sensitivity)]
 
 
 class SpeechGate:
-    def __init__(self, models):
+    def __init__(self, models, sensitivity='balanced'):
         self.models = Path(models)
         self.detector = None
         self.attempted = False
         self.warning = ''
+        self.profile = profile(sensitivity)
+
+    def configure(self, sensitivity):
+        choice = profile(sensitivity)
+        if choice != self.profile:
+            self.close()
+            self.profile = choice
 
     def prepare(self, status=lambda text: None, stopped=lambda: False):
         if self.detector is not None or self.attempted:
@@ -82,8 +91,8 @@ class SpeechGate:
             import sherpa_onnx as so
             config = so.VadModelConfig()
             config.silero_vad.model = str(path)
-            config.silero_vad.threshold = .35
-            config.silero_vad.min_speech_duration = .096
+            config.silero_vad.threshold = self.profile.vad_threshold
+            config.silero_vad.min_speech_duration = self.profile.speech_seconds
             config.silero_vad.min_silence_duration = .1
             config.silero_vad.max_speech_duration = 30
             config.sample_rate, config.num_threads, config.provider = RATE, 1, 'cpu'
@@ -101,7 +110,7 @@ class SpeechGate:
         if len(pcm) % 2:
             raise ValueError('発話判定のPCM音声が正しくありません。')
         samples = np.frombuffer(pcm, '<i2').astype('float32') / 32768
-        if not audible(samples):
+        if not audible(samples, self.profile.key):
             return []
         if self.detector is None:
             return [(0, len(samples))]
@@ -113,7 +122,7 @@ class SpeechGate:
             # bounded gain only to its analysis copy, never to ASR or recordings.
             peak = float(np.max(np.abs(samples)))
             if peak < .1:
-                samples = samples * min(20., .1/max(peak, 1e-8))
+                samples = samples * min(self.profile.max_gain, .1/max(peak, 1e-8))
             padded = np.pad(samples, (0, (-len(samples)) % 512))
             for offset in range(0, len(padded), 512):
                 self.detector.accept_waveform(padded[offset:offset+512])

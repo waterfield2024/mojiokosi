@@ -41,6 +41,8 @@ def processing_preferences(data=None, *, context_default=False):
     if type(seconds) is not int or seconds not in CHUNK_SECONDS:
         raise ValueError("音声を区切る間隔は2・3・5・8秒から選んでください。")
     saved["chunk_seconds"] = seconds
+    from speech_preferences import profile
+    saved['speech_sensitivity'] = profile(data.get('speech_sensitivity', 'balanced')).key
     return saved
 
 

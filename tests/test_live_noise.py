@@ -216,6 +216,7 @@ class NoisePipeline(unittest.TestCase):
             reducer = LiveNoiseReducer(folder, worker_factory=FakeWorker)
             self.addCleanup(reducer.close)
             class Capture:
+                def set_sensitivity(self, *args): pass
                 def __init__(self, device, wav, chunks, stopped, seconds, meter):
                     self.total, self.error = 32000, None
                     self.ready, self.done, self.halt = threading.Event(), threading.Event(), threading.Event()

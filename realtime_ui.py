@@ -12,6 +12,7 @@ from engine import ROOT, NO_WINDOW
 from asr import COMPUTE_OPTIONS
 from subtitle_overlay import SubtitleOverlay
 from recognition_models import LIVE_MODELS,model_hint
+from speech_preferences import LABELS as SPEECH_LABELS, HINTS as SPEECH_HINTS
 
 class RealtimeControls:
     def init_realtime(self):
@@ -60,6 +61,9 @@ class RealtimeControls:
         self.live_context = tk.BooleanVar(value=processing["context_correct"])
         self.live_correct = tk.BooleanVar(value=processing["live_correct"])
         self.live_noise = tk.BooleanVar(value=processing['live_noise'])
+        self.live_sensitivity = tk.StringVar(value=next(label for label, key in SPEECH_LABELS.items()
+                                                       if key == processing['speech_sensitivity']))
+        self.live_speech_message = tk.StringVar(value=SPEECH_HINTS[processing['speech_sensitivity']])
         self.live_noise_message = tk.StringVar(value='ノイズ除去：準備前' if self.live_noise.get() else 'ノイズ除去：OFF（元の音声で認識）')
         self.live_context_message = tk.StringVar(value="字幕は先に表示し、校正できた部分を後から差し替えます。" if self.live_correct.get() else "字幕の自動修正：OFF")
         self.live_show = tk.BooleanVar(value=settings["display"]["show"])
@@ -101,7 +105,8 @@ class RealtimeControls:
     def live_model_settings(self):
         return {"model": LIVE_MODELS[self.live_model.get()],
                 "compute": COMPUTE_OPTIONS[self.compute.get()], "live_diarize": self.live_diarize.get(),
-                "live_correct": self.live_correct.get(), "live_noise": self.live_noise.get()}
+                "live_correct": self.live_correct.get(), "live_noise": self.live_noise.get(),
+                'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()]}
 
     def schedule_live_preload(self, *args):
         if self.proc or not self.live_window or not self.live_window.winfo_exists():
@@ -173,6 +178,7 @@ class RealtimeControls:
         self.live_button.pack(side="right")
         self.live_model.trace_add("write", self.change_live_model)
         self.live_noise.trace_add('write', self.change_live_noise)
+        self.live_sensitivity.trace_add('write', self.change_live_sensitivity)
         self.compute.trace_add("write", self.schedule_live_preload)
         for variable in (self.live_diarize, self.live_correct):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=True))
@@ -284,6 +290,16 @@ class RealtimeControls:
         noise_hint = ttk.Label(frame, textvariable=self.live_noise_message, style='Sub.TLabel', wraplength=680)
         noise_hint.pack(anchor='w', fill='x', pady=(0, 6))
         noise_hint.bind('<Configure>', lambda e: noise_hint.configure(wraplength=max(200, e.width)))
+        speech_row = ttk.Frame(frame)
+        speech_row.pack(fill='x', pady=(2, 3))
+        ttk.Label(speech_row, text='無音判定の感度').pack(side='left', padx=(0, 8))
+        self.live_sensitivity_combo = ttk.Combobox(speech_row, textvariable=self.live_sensitivity,
+                                                  values=list(SPEECH_LABELS), state='readonly', width=28)
+        self.live_sensitivity_combo.pack(side='left')
+        ttk.Label(speech_row, text='録音中も変更可', style='Sub.TLabel').pack(side='left', padx=8)
+        speech_hint = ttk.Label(frame, textvariable=self.live_speech_message, style='Sub.TLabel', wraplength=680)
+        speech_hint.pack(fill='x', pady=(0, 8))
+        speech_hint.bind('<Configure>', lambda e: speech_hint.configure(wraplength=max(200, e.width)))
         subtitle = ttk.LabelFrame(frame, text="動画に重ねる字幕", padding=10)
         subtitle.pack(fill="x")
         row = ttk.Frame(subtitle); row.pack(fill="x")
@@ -497,7 +513,24 @@ class RealtimeControls:
         from recording_settings import processing_preferences
         return processing_preferences({"live_diarize": self.live_diarize.get(), "live_correct": self.live_correct.get(),
                                        "context_correct": self.live_context.get(), "chunk_seconds": int(self.live_chunk.get()),
-                                       'live_noise': self.live_noise.get()})
+                                       'live_noise': self.live_noise.get(),
+                                       'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()]})
+
+    def change_live_sensitivity(self, *args):
+        value = SPEECH_LABELS.get(self.live_sensitivity.get())
+        if value is None:
+            return
+        self.persist_live_recording_settings()
+        self.live_speech_message.set(SPEECH_HINTS[value])
+        if self.proc and self.operation == 'realtime':
+            from context_ai import write_json
+            try:
+                write_json(self.job / 'speech-control.json', {'sensitivity': value})
+                self.live_speech_message.set('次の音声区間から反映します。' + SPEECH_HINTS[value])
+            except OSError as exc:
+                self.live_speech_message.set('感度の変更を送信できませんでした：' + str(exc))
+        elif not self.proc:
+            self.schedule_live_preload()
 
     def change_live_noise(self, *args):
         self.persist_live_recording_settings()
@@ -657,6 +690,7 @@ class RealtimeControls:
                    "num_speakers": self.speaker_count(), "context_correct": self.live_context.get(),
                    "live_correct": self.live_correct.get(),
                    "live_noise": self.live_noise.get(),
+                   'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()],
                    "correction_rules": self.automatic_correction_rules(),
                    "speaker_memory_file": str(self.speaker_memory.path)}
         try:
@@ -688,6 +722,11 @@ class RealtimeControls:
     def handle_live_event(self, event):
         kind = event["kind"]
         if self.live_shortcut and self.live_shortcut.handle(event):return True
+        if kind == 'live_speech_status':
+            value = event.get('sensitivity')
+            if value == SPEECH_LABELS.get(self.live_sensitivity.get()):
+                self.live_speech_message.set('設定を反映しました。' + SPEECH_HINTS[value])
+            return True
         if kind == 'live_noise_status':
             self.live_noise_message.set(event['text'])
             return True

@@ -6,6 +6,7 @@ import threading
 import time
 import wave
 import numpy as np
+from speech_preferences import profile, read_control
 
 RATE = 16000
 
@@ -23,7 +24,7 @@ def devices():
 
 class Chunker:
     """Split on pauses, with short shared context across forced long-speech cuts."""
-    def __init__(self, submit, seconds=2):
+    def __init__(self, submit, seconds=2, sensitivity='balanced'):
         self.submit = submit
         self.limit = int(seconds * RATE)
         self.total = 0
@@ -31,12 +32,13 @@ class Chunker:
         self.last_voice = 0
         self.core = 0
         self.voiced = 0
+        self.profile = profile(sensitivity)
 
     def feed(self, pcm):
         count = len(pcm) // 2
         a, b = self.total, self.total + count
         self.total = b
-        voice = bool(pcm) and audioop.rms(pcm, 2) >= 110
+        voice = bool(pcm) and audioop.rms(pcm, 2) >= self.profile.capture_rms
         if voice:
             if self.start is None:
                 self.start = max(self.core, a - int(.25 * RATE))
@@ -48,7 +50,7 @@ class Chunker:
         pause = b - self.last_voice >= int(.35 * RATE)
         full = b - max(self.start, self.core) >= self.limit
         if pause or full:
-            if self.voiced >= int(.2 * RATE):
+            if self.voiced >= int(self.profile.capture_seconds * RATE):
                 self.submit(self.start, b, self.core)
                 self.core = b
             if full and not pause:
@@ -59,7 +61,7 @@ class Chunker:
                 self.voiced = 0
 
     def finish(self):
-        if self.start is not None and self.voiced >= int(.1 * RATE) and self.total > self.core:
+        if self.start is not None and self.voiced >= int(self.profile.final_seconds * RATE) and self.total > self.core:
             self.submit(self.start, self.total, self.core)
             self.core = self.total
         self.start = None
@@ -68,6 +70,8 @@ class LoopbackCapture:
     def __init__(self, device, output, chunks, stopped, seconds=2, meter=lambda **kw: None):
         self.device, self.output, self.chunks, self.stopped = device, output, chunks, stopped
         self.seconds, self.meter = seconds, meter
+        self.profile = profile()
+        self.speech_control = None
         self.total = 0
         self.error = None
         self.epoch = None
@@ -81,6 +85,18 @@ class LoopbackCapture:
 
     def stop(self):
         self.halt.set()
+
+    def set_sensitivity(self, value, control_path=None):
+        # One immutable profile is published atomically to the capture thread.
+        self.profile = profile(value)
+        if control_path is not None:
+            self.speech_control = control_path
+
+    def update_chunker(self, chunker):
+        # Apply live changes even while the ASR thread is busy with inference.
+        if self.speech_control is not None:
+            self.set_sensitivity(read_control(self.speech_control, self.profile.key))
+        chunker.profile = self.profile
 
     def run(self):
         import pyaudiowpatch as pa
@@ -113,7 +129,7 @@ class LoopbackCapture:
             def submit(a, b, core):
                 writer._file.flush()
                 self.chunks.put((a, b, core))
-            chunker = Chunker(submit, self.seconds)
+            chunker = Chunker(submit, self.seconds, self.profile.key)
             epoch = time.monotonic()
             self.epoch = epoch
             stream.start_stream()
@@ -121,6 +137,7 @@ class LoopbackCapture:
             def write_pcm(pcm):
                 writer.writeframes(pcm)
                 writer._file.flush()
+                self.update_chunker(chunker)
                 chunker.feed(pcm)
                 self.total += len(pcm) // 2
 
