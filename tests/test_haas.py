@@ -131,6 +131,7 @@ class HaasIntegration(unittest.TestCase):
             request = {'model': HAAS_MODEL, 'language': 'en', 'device': {'name': 'test fixture'},
                        'live_diarize': False, 'diarize': False, 'live_correct': False, 'context_correct': False}
             with patch.object(engine, 'RESULTS', Path(folder) / 'results'), patch.object(realtime, 'LoopbackCapture', Capture), \
+                 patch.object(realtime, 'SpeechGate', return_value=Mock(warning='', intervals=lambda pcm: [(0, len(pcm)//2)])), \
                  patch('haas_asr.HaasRecognizer', return_value=fake), patch.object(engine, 'emit', side_effect=lambda kind, **values: events.append({'kind': kind, **values})), \
                  patch.object(engine, 'cache_audio', side_effect=lambda wav, _: str(wav)):
                 realtime.run_live(request, Path(folder))

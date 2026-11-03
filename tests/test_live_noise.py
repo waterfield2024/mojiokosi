@@ -239,6 +239,7 @@ class NoisePipeline(unittest.TestCase):
             request = {'model': 'haas-ja-v1.0', 'language': 'ja', 'device': {'name': 'test fixture'},
                        'live_diarize': True, 'live_noise': True, 'diarize': False, 'context_correct': False}
             with patch.object(engine, 'RESULTS', folder/'results'), patch.object(realtime, 'LoopbackCapture', Capture), \
+                 patch.object(realtime, 'SpeechGate', return_value=Mock(warning='', intervals=lambda pcm: [(0, len(pcm)//2)])), \
                  patch.object(realtime, 'next_live_chunk', side_effect=[(0, 16000, 0), (16000, 32000, 16000), None]), \
                  patch('live_noise.LiveNoiseReducer', return_value=reducer), patch('haas_asr.HaasRecognizer', return_value=recognizer), \
                  patch.object(realtime, 'LiveSpeakerProcess', return_value=diarizer), \

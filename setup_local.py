@@ -26,7 +26,7 @@ SEGMENTATION_SHA256 = '220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e9
 SPEAKER_RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/'
 SETUP_INPUTS = ('setup_local.py', 'run.py', 'requirements.txt', 'requirements-lock.txt',
                 'whisper_hf_manifest.json', 'granite_model_manifest.json', 'haas_model_manifest.json',
-                'reuse_assets.py', 'reuse_model/config.json')
+                'reuse_assets.py', 'reuse_model/config.json', 'speech_gate.py')
 
 
 def fingerprint(root=ROOT):
@@ -47,7 +47,7 @@ def read_state(root=ROOT):
 
 def required_assets(model, noise, root=ROOT):
     paths = ['.tools/ffmpeg.exe', '.tools/node.exe', 'models/speakers/segmentation.onnx',
-             'models/speakers/embedding.onnx']
+             'models/speakers/embedding.onnx', 'models/vad/silero-v5.onnx']
     if model != 'none':
         if model in ('granite', 'haas'):
             manifest = json.loads((root / (model + '_model_manifest.json')).read_text('utf-8'))
@@ -223,6 +223,8 @@ def prepare_assets(model, noise=False):
         shutil.copy2(original, target)
     download(f'https://nodejs.org/dist/v{NODE_VERSION}/win-x64/node.exe', tools / 'node.exe', NODE_SHA256)
     prepare_speakers()
+    from speech_gate import ensure_vad
+    ensure_vad(ROOT / 'models', print)
     if model != 'none':
         if model == 'granite':
             from granite_model import ensure_granite

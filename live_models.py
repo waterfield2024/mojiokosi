@@ -20,6 +20,8 @@ class LiveModels:
         self.proofreader = None
         from live_noise import LiveNoiseReducer
         self.noise = LiveNoiseReducer(self.folder, self.closing)
+        from speech_gate import SpeechGate
+        self.speech = SpeechGate(ROOT / 'models')
         self.key = None
 
     @staticmethod
@@ -87,6 +89,7 @@ class LiveModels:
         if stopped():
             raise LiveStopped()
         self.proofreader_for(request)
+        self.speech.prepare(status, stopped)
         noise = self.noise.prepare(request.get('live_noise', False), request.get('compute', 'auto'), status, stopped)
         return {**self.info(), 'speaker_warning': warning, 'noise': noise}
 
@@ -122,6 +125,7 @@ class LiveModels:
             self.diarizer.stopped = self.closing
 
     def close(self):
+        self.speech.close()
         self.noise.close()
         for worker in (self.recognizer, self.diarizer, self.proofreader):
             if worker:

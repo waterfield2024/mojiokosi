@@ -19,6 +19,7 @@ The URL and SHA-256 are pinned from https://www.python.org/ftp/python/index-wind
 | einops 0.8.1 | https://github.com/arogozhnikov/einops — MIT |
 | Haas community ONNX conversion | oboroge0: https://huggingface.co/oboroge0/Haas-ja-v1.0-onnx-quantized — Apache-2.0; pinned revision and hashes in `haas_model_manifest.json`; original LICENSE and NOTICE retained in `licenses/Haas-LICENSE` and `licenses/Haas-NOTICE`. Unofficial quantized CPU conversion, not endorsed by Third Intelligence. |
 | sherpa-onnx | https://github.com/k2-fsa/sherpa-onnx — Apache-2.0 |
+| Silero VAD v5.0 | https://github.com/snakers4/silero-vad — MIT, Copyright (c) 2020-present Silero Team. Official ONNX weights pinned to commit `5cd2ba54db059f961e7545d4f211b44f005a6dfb`; URL and SHA-256 in `speech_gate.py`, license in `licenses/Silero-VAD-LICENSE`. |
 | Pyannote segmentation 3.0 ONNX | sherpa-onnx `speaker-segmentation-models` release; supplied model license retained in `licenses/segmentation-LICENSE` |
 | 3D-Speaker ERes2Net embedding | sherpa-onnx `speaker-recongition-models` release; https://github.com/modelscope/3D-Speaker — Apache-2.0 |
 | FFmpeg from imageio-ffmpeg 0.6.0 | https://github.com/imageio/imageio-ffmpeg — wrapper BSD-2-Clause; the downloaded FFmpeg executable has its own LGPL/GPL build terms; https://ffmpeg.org/legal.html |
