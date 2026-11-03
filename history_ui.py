@@ -2,8 +2,11 @@
 import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
+from comparison_audio import PLAYBACK_SPEEDS
 from transcript_history import LIMITS, match_spans, row_key, select_page
 from ui_theme import palette, style_text
+
+SPEED_LABELS = {f'{speed:g}倍': speed for speed in PLAYBACK_SPEEDS}
 
 
 class HistoryWindow(tk.Toplevel):
@@ -28,6 +31,8 @@ class HistoryWindow(tk.Toplevel):
         self.audio_key = None
         self.audio_interval = None
         self.audio_requested_interval = None
+        self.audio_playing_speed = 1.0
+        self.audio_speed = tk.StringVar(value='1倍')
         self.audio_tags = {}
         self.press = None
         self.audio_status = tk.StringVar(value='発言をクリックすると音声を再生します')
@@ -93,9 +98,17 @@ class HistoryWindow(tk.Toplevel):
         audio_bar = ttk.Frame(outer)
         audio_bar.grid(row=7, column=0, sticky='ew', pady=(8, 0))
         audio_bar.columnconfigure(0, weight=1)
-        ttk.Label(audio_bar, textvariable=self.audio_status, style='Sub.TLabel', wraplength=210).grid(row=0, column=0, sticky='w')
+        speed_bar = ttk.Frame(audio_bar)
+        speed_bar.grid(row=0, column=0, sticky='w')
+        ttk.Label(speed_bar, text='再生速度').pack(side='left', padx=(0, 6))
+        self.audio_speed_combo = ttk.Combobox(speed_bar, textvariable=self.audio_speed,
+                                             values=list(SPEED_LABELS), state='readonly', width=6)
+        self.audio_speed_combo.pack(side='left')
+        self.audio_speed_combo.bind('<<ComboboxSelected>>', self.change_audio_speed)
         self.audio_stop = ttk.Button(audio_bar, text='音声を停止', command=lambda: self.stop_audio('再生を停止しました。'), state='disabled')
         self.audio_stop.grid(row=0, column=1, sticky='e', padx=(6, 0))
+        ttk.Label(audio_bar, textvariable=self.audio_status, style='Sub.TLabel', wraplength=310).grid(
+            row=1, column=0, columnspan=2, sticky='w', pady=(5, 0))
         self.query.trace_add('write', lambda *args: self.search_changed())
         self.protocol('WM_DELETE_WINDOW', app.hide_history)
         self.bind('<Destroy>', self.destroyed, add='+')
@@ -168,14 +181,26 @@ class HistoryWindow(tk.Toplevel):
             comparison = getattr(self.app, 'comparison_window', None)
             if comparison:
                 comparison.stop_comparison_audio()
-            self.audio_generation = self.audio_player.play(source, [interval])
+            self.audio_playing_speed = SPEED_LABELS.get(self.audio_speed.get(), 1.0)
+            self.audio_generation = self.audio_player.play(source, [interval], speed=self.audio_playing_speed)
             self.audio_key, self.audio_interval = key, interval
             self.audio_requested_interval = utterance_interval(row)
-            self.audio_status.set('発言の音声を準備中…')
+            self.audio_status.set(f'{self.audio_playing_speed:g}倍速で音声を準備中…')
             self.audio_stop.configure(state='normal')
             self.mark_playing()
         except (OSError, RuntimeError, ValueError) as exc:
             self.stop_audio('再生できません：' + str(exc))
+
+    def change_audio_speed(self, event=None):
+        speed = SPEED_LABELS.get(self.audio_speed.get(), 1.0)
+        if self.audio_generation is not None:
+            if speed == self.audio_playing_speed:
+                return
+            self.play_entry(self.audio_key)
+            if self.audio_generation is not None:
+                self.audio_status.set(f'{speed:g}倍速で発言の最初から再生します。')
+        else:
+            self.audio_status.set(f'再生速度：{speed:g}倍。発言をクリックして再生します。')
 
     def stop_audio(self, message='発言をクリックすると音声を再生します'):
         if self.audio_player:
@@ -206,7 +231,7 @@ class HistoryWindow(tk.Toplevel):
                 continue
             if state == 'playing':
                 from engine import timestamp
-                text = f'再生中 {timestamp(value)[:8]} / {timestamp(self.audio_interval[1])[:8]}'
+                text = f'再生中 {self.audio_playing_speed:g}倍 · {timestamp(value)[:-2]} / {timestamp(self.audio_interval[1])[:-2]}'
                 if getattr(self.app, 'live_recording', False):
                     text += '\n録音中：再生音も取り込まれる場合があります'
                 self.audio_status.set(text)

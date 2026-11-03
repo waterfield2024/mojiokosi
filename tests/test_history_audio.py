@@ -99,9 +99,9 @@ class FakePlayer:
     def stop(self):
         self.generation += 1
 
-    def play(self, source, intervals):
+    def play(self, source, intervals, speed=1.0):
         self.stop()
-        self.played.append((source, intervals))
+        self.played.append((source, intervals, speed))
         return self.generation
 
     def close(self):
@@ -118,6 +118,9 @@ class HistoryPlaybackLifecycle(unittest.TestCase):
                                     live_recording=False)
         panel.audio_player = self.player = FakePlayer()
         panel.audio_key = panel.audio_generation = panel.audio_interval = panel.audio_requested_interval = None
+        panel.audio_playing_speed = 1.0
+        panel.audio_speed = Mock()
+        panel.audio_speed.get.return_value = '1倍'
         panel.audio_status = Mock()
         panel.audio_stop = Mock()
         panel.mark_playing = Mock()
@@ -160,6 +163,57 @@ class HistoryPlaybackLifecycle(unittest.TestCase):
         self.panel.app.segments.pop(0)
         self.panel.poll_audio()
         self.assertIsNone(self.panel.audio_key)
+
+    def test_speed_change_when_stopped_does_not_start_audio(self):
+        panel = self.panel
+        panel.audio_speed.get.return_value = '0.75倍'
+        panel.change_audio_speed()
+        self.assertFalse(self.player.played)
+        panel.play_entry('a')
+        self.assertEqual(self.player.played[-1][1:], ([(1., 2.)], .75))
+        panel.stop_audio()
+        panel.play_entry('b')
+        self.assertEqual(self.player.played[-1][1:], ([(5., 6.)], .75))
+
+    def test_speed_change_restarts_whole_utterance_and_ignores_old_events(self):
+        panel = self.panel
+        panel.play_entry('b')
+        old = panel.audio_generation
+        self.player.events.put((old, 'playing', 5.5))
+        self.player.events.put((old, 'ended', None))
+        panel.audio_speed.get.return_value = '0.5倍'
+        panel.change_audio_speed()
+        self.assertNotEqual(panel.audio_generation, old)
+        self.assertEqual(self.player.played[-1][1:], ([(5., 6.)], .5))
+        panel.poll_audio()
+        self.assertEqual(panel.audio_key, 'b')
+        self.player.events.put((panel.audio_generation, 'playing', 5.25))
+        panel.poll_audio()
+        self.assertIn('0.5倍', panel.audio_status.set.call_args.args[0])
+
+    def test_reselecting_current_speed_does_not_restart(self):
+        self.panel.play_entry('a')
+        generation = self.panel.audio_generation
+        self.panel.change_audio_speed()
+        self.assertEqual(self.panel.audio_generation, generation)
+        self.assertEqual(len(self.player.played), 1)
+
+    def test_rapid_speed_changes_only_leave_last_playback_active(self):
+        panel = self.panel
+        panel.play_entry('a')
+        for label in ['0.5倍', '1.5倍', '0.75倍']:
+            previous = panel.audio_generation
+            panel.audio_speed.get.return_value = label
+            panel.change_audio_speed()
+            self.player.events.put((previous, 'error', '古い再生のエラー'))
+        panel.poll_audio()
+        self.assertEqual(panel.audio_key, 'a')
+        self.assertEqual(self.player.played[-1][2], .75)
+        panel.stop_audio()
+        panel.audio_speed.get.return_value = '1倍'
+        panel.change_audio_speed()
+        self.assertIsNone(panel.audio_generation)
+        self.assertEqual(len(self.player.played), 4)
 
     def test_close_releases_player_and_resets_controls(self):
         self.panel.play_entry('a')
