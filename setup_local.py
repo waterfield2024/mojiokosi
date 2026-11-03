@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import ctypes
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -22,6 +24,99 @@ NODE_VERSION = '24.19.0'
 NODE_SHA256 = '3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237'
 SEGMENTATION_SHA256 = '220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079'
 SPEAKER_RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/'
+SETUP_INPUTS = ('setup_local.py', 'run.py', 'requirements.txt', 'requirements-lock.txt',
+                'whisper_hf_manifest.json', 'granite_model_manifest.json', 'haas_model_manifest.json',
+                'reuse_assets.py', 'reuse_model/config.json')
+
+
+def fingerprint(root=ROOT):
+    digest = hashlib.sha256()
+    for name in SETUP_INPUTS:
+        digest.update(name.encode('utf-8'))
+        digest.update((root / name).read_bytes())
+    return digest.hexdigest()
+
+
+def read_state(root=ROOT):
+    try:
+        value = json.loads((root / '.setup-complete.json').read_text('utf-8'))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def required_assets(model, noise, root=ROOT):
+    paths = ['.tools/ffmpeg.exe', '.tools/node.exe', 'models/speakers/segmentation.onnx',
+             'models/speakers/embedding.onnx']
+    if model != 'none':
+        if model in ('granite', 'haas'):
+            manifest = json.loads((root / (model + '_model_manifest.json')).read_text('utf-8'))
+            folder = 'granite-speech-5.0-turboctc' if model == 'granite' else 'haas-ja-v1.0-onnx'
+        else:
+            manifest = json.loads((root / 'whisper_hf_manifest.json').read_text('utf-8'))[model]
+            folder = 'whisper-hf-' + model
+        paths += ['models/' + folder + '/' + name for name in manifest['files']]
+    if noise:
+        paths.append('models/nemotronlabs-re-use/model.safetensors')
+    return paths
+
+
+def setup_ready(root=ROOT):
+    """Fast, offline check, executed by the project's interpreter before launch."""
+    state = read_state(root)
+    try:
+        if state.get('fingerprint') != fingerprint(root):
+            return False
+        if state['device'] not in ('cuda', 'cpu'):
+            return False
+        expected = torch_packages(state['device'])
+        expected += [line.strip() for line in (root / 'requirements-lock.txt').read_text('utf-8').splitlines()
+                     if line.strip() and not line.startswith('#')]
+        for requirement in expected:
+            name, version = requirement.split('==')
+            if importlib.metadata.version(name) != version:
+                return False
+        for name in required_assets(state['model'], state['noise'], root):
+            size = (root / name).stat().st_size
+            if size <= 0 or size != state['assets'][name]:
+                return False
+        return True
+    except (OSError, ValueError, TypeError, KeyError, importlib.metadata.PackageNotFoundError):
+        return False
+
+
+def save_state(device, requested_device, model, root=ROOT):
+    state = {'device': device, 'requested_device': requested_device, 'model': model, 'noise': device == 'cuda',
+             'fingerprint': fingerprint(root)}
+    state['assets'] = {name: (root / name).stat().st_size for name in required_assets(model, state['noise'], root)}
+    write_state(state, root)
+
+
+def write_state(state, root=ROOT):
+    temporary = root / '.setup-complete.json.tmp'
+    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), 'utf-8')
+    os.replace(temporary, root / '.setup-complete.json')
+
+
+@contextmanager
+def setup_lock(root=ROOT):
+    import msvcrt
+    path = root / '.cache/setup.lock'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a+b') as stream:
+        if not stream.tell():
+            stream.write(b'0')
+            stream.flush()
+        stream.seek(0)
+        try:
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            raise RuntimeError('別のセットアップが実行中です。その画面が完了するまでお待ちください。') from exc
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def sha256(path):
@@ -97,7 +192,18 @@ def nvidia_available():
 
 
 def run(args, **kwargs):
-    subprocess.run([str(value) for value in args], check=True, cwd=ROOT, **kwargs)
+    command = [str(value) for value in args]
+    log = ROOT / '.cache/setup.log'
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open('a', encoding='utf-8') as output:
+        with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, encoding='utf-8', errors='replace', **kwargs) as process:
+            for line in process.stdout:
+                print(line, end='', flush=True)
+                output.write(line)
+                output.flush()
+            if process.wait():
+                raise subprocess.CalledProcessError(process.returncode, command)
 
 
 def torch_packages(device):
@@ -107,7 +213,7 @@ def torch_packages(device):
     return [f'{name}=={TORCH_VERSION}+{build}' for name in ('torch', 'torchaudio')]
 
 
-def prepare_assets(model):
+def prepare_assets(model, noise=False):
     import imageio_ffmpeg
     tools = ROOT / '.tools'
     tools.mkdir(exist_ok=True)
@@ -127,44 +233,100 @@ def prepare_assets(model):
         else:
             from whisper_hf_model import ensure_whisper_hf
             ensure_whisper_hf(model, ROOT / 'models', print)
+    if noise:
+        from reuse_assets import ensure_reuse
+        ensure_reuse(ROOT / 'models', print)
+
+
+def install_torch(python, device):
+    index = 'cu128' if device == 'cuda' else 'cpu'
+    run([python, '-m', 'pip', 'install', *torch_packages(device),
+         '--index-url', 'https://download.pytorch.org/whl/' + index])
+
+
+def cuda_works(python):
+    code = 'import torch; assert torch.cuda.is_available(); torch.ones(1,device="cuda").sum().item(); print(torch.cuda.get_device_name())'
+    try:
+        run([python, '-X', 'utf8', '-c', code])
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def install(args):
+    environment = ROOT / '.venv'
+    python = environment / 'Scripts/python.exe'
+    if args.ensure and python.is_file() and args.device is None and args.model is None:
+        result = subprocess.run([str(python), '-X', 'utf8', __file__, '--check-ready'], cwd=ROOT,
+                                capture_output=True, timeout=30)
+        if result.returncode == 0:
+            print('セットアップ済みです。保存済みの環境を使います。', flush=True)
+            return
+    saved = read_state()
+    model = args.model or saved.get('model', 'base')
+    if model not in ('base', 'small', 'turbo', 'granite', 'haas', 'none'):
+        model = 'base'
+    requested = args.device or saved.get('requested_device', 'auto')
+    if requested not in ('auto', 'cpu', 'cuda'):
+        requested = 'auto'
+    device = ('cuda' if nvidia_available() else 'cpu') if requested == 'auto' else requested
+    # Invalidate readiness, but retain the chosen options if installation fails.
+    write_state({'requested_device': requested, 'model': model}, ROOT)
+    print('[1/5] このフォルダー専用のPython環境を確認しています…', flush=True)
+    if not python.is_file():
+        # venv can resume an interrupted creation without clearing this directory.
+        venv.EnvBuilder(with_pip=True).create(environment)
+    run([python, '-X', 'utf8', '-c', 'import sys,struct,tkinter;assert sys.version_info[:2]==(3,12) and struct.calcsize("P")==8'])
+    print(f'[2/5] {device.upper()}用の認識ライブラリを準備しています…', flush=True)
+    install_torch(python, device)
+    if device == 'cuda' and not cuda_works(python):
+        if requested == 'cuda':
+            raise RuntimeError('CUDAで実行できません。NVIDIAドライバーを確認するか setup.cmd --device cpu を実行してください。')
+        print('この環境ではCUDAを使えないため、CPU版で準備します。Nemotronノイズ除去はGPUが必要です。', flush=True)
+        device = 'cpu'
+        install_torch(python, device)
+    print('[3/5] アプリのライブラリを準備しています…', flush=True)
+    run([python, '-m', 'pip', 'install', '-r', ROOT / 'requirements.txt', '--index-url', 'https://pypi.org/simple'])
+    run([python, '-m', 'pip', 'check'])
+    print('[4/5] 動画処理・話者判別・認識モデル' + ('・Nemotron' if device == 'cuda' else '') + 'を準備しています…', flush=True)
+    command = [python, '-X', 'utf8', __file__, '--assets-only', '--model', model]
+    if device == 'cuda':
+        command.append('--prepare-noise')
+    run(command)
+    print('[5/5] 起動に必要な機能を確認しています…', flush=True)
+    run([python, '-X', 'utf8', ROOT / 'run.py', '--check'])
+    save_state(device, requested, model)
+    print('\nセットアップが完了しました。次回も start.cmd で起動できます。', flush=True)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Whisper Local: Windows Python setup')
-    parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
-    parser.add_argument('--model', choices=['base', 'small', 'turbo', 'granite', 'haas', 'none'], default='base')
+    parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'])
+    parser.add_argument('--model', choices=['base', 'small', 'turbo', 'granite', 'haas', 'none'])
+    parser.add_argument('--ensure', action='store_true', help='Set up only when dependencies or assets need updating')
+    parser.add_argument('--launch', action='store_true', help='Start the application after setup')
+    parser.add_argument('--check-ready', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--prepare-noise', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--assets-only', action='store_true', help='Prepare downloads using an already installed environment')
     args = parser.parse_args(argv)
     if os.name != 'nt' or struct.calcsize('P') != 8 or sys.version_info[:2] != (3, 12):
-        parser.error('Windows x64 and Python 3.12 are required. Run: py -3.12 setup_local.py')
+        parser.error('Windows x64 / Python 3.12 が必要です。start.cmd を開いてください。')
     import tkinter  # Fail early if the selected Python lacks Tcl/Tk.
+    if args.check_ready:
+        return 0 if setup_ready() else 10
     if args.assets_only:
-        prepare_assets(args.model)
-        return
-    environment = ROOT / '.venv'
-    python = environment / 'Scripts/python.exe'
-    if not python.is_file():
-        if environment.exists() and any(environment.iterdir()):
-            raise RuntimeError('.venv exists but has no interpreter. Rename it before retrying setup.')
-        print('Creating .venv...', flush=True)
-        venv.EnvBuilder(with_pip=True).create(environment)
-    run([python, '-c', 'import sys,struct;assert sys.version_info[:2]==(3,12) and struct.calcsize("P")==8'])
-    device = ('cuda' if nvidia_available() else 'cpu') if args.device == 'auto' else args.device
-    index = 'cu128' if device == 'cuda' else 'cpu'
-    print(f'Installing {device.upper()} dependencies...', flush=True)
-    run([python, '-m', 'pip', 'install', *torch_packages(device),
-         '--index-url', 'https://download.pytorch.org/whl/' + index])
-    run([python, '-m', 'pip', 'install', '-r', ROOT / 'requirements.txt', '--index-url', 'https://pypi.org/simple'])
-    run([python, '-m', 'pip', 'check'])
-    run([python, '-X', 'utf8', __file__, '--assets-only', '--model', args.model])
-    run([python, '-X', 'utf8', ROOT / 'run.py', '--check'])
-    (ROOT / '.setup-complete.json').write_text(json.dumps({'device': device, 'model': args.model}, indent=2), 'utf-8')
-    print('\nSetup complete. Start with: .venv\\Scripts\\python.exe run.py', flush=True)
+        prepare_assets(args.model or 'base', args.prepare_noise)
+        return 0
+    with setup_lock():
+        install(args)
+    if args.launch:
+        return subprocess.call([str(ROOT / '.venv/Scripts/python.exe'), '-X', 'utf8', str(ROOT / 'run.py')], cwd=ROOT)
+    return 0
 
 
 if __name__ == '__main__':
     try:
-        main()
-    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
-        print(f'\nSetup did not finish: {exc}\nFix the reported issue, then run setup again.', file=sys.stderr)
+        raise SystemExit(main())
+    except (OSError, RuntimeError, ImportError, subprocess.SubprocessError) as exc:
+        print(f'\nセットアップを完了できませんでした: {exc}\n通信や空き容量を確認し、アプリを閉じて start.cmd を再実行してください。\n詳細: {ROOT / ".cache/setup.log"}', file=sys.stderr)
         raise SystemExit(1)

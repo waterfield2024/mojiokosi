@@ -2,7 +2,10 @@
 
 The Git repository distributes the application source, asset manifests and notices.
 It does not bundle a Python installation, native executables, Python wheels, model weights or user data.
-Installations/downloads made by `setup_local.py` remain outside version control.
+Installations/downloads made by `bootstrap.cmd` and `setup_local.py` remain outside version control.
+When no compatible Python is installed, the bootstrap downloads the official full
+Python 3.12.10 x64 runtime ZIP (including Tcl/Tk), retaining its bundled licenses.
+The URL and SHA-256 are pinned from https://www.python.org/ftp/python/index-windows.json.
 
 | Component | Source / license |
 | --- | --- |

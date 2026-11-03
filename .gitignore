@@ -12,6 +12,7 @@ __pycache__/
 .env.*
 !.env.example
 .setup-complete.json
+.setup-complete.json.tmp
 transcripts/
 speaker_memory_clips/
 speaker_sources/

@@ -19,6 +19,8 @@ def check_environment():
     import torch
     import transformers
     import yt_dlp
+    import einops
+    import safetensors
     ffmpeg = ROOT / '.tools/ffmpeg.exe'
     result = subprocess.run([str(ffmpeg), '-hide_banner', '-filters'], capture_output=True,
                             text=True, errors='replace', check=True, timeout=20, creationflags=NO_WINDOW)
@@ -40,16 +42,18 @@ def main():
     args = parser.parse_args()
     python = ROOT / '.venv/Scripts/python.exe'
     if not python.is_file():
-        raise RuntimeError('初回セットアップが必要です: py -3.12 setup_local.py')
+        raise RuntimeError('start.cmd を開くと、初回セットアップから起動まで自動で進みます。')
     if Path(sys.executable).resolve() != python.resolve():
         return subprocess.call([str(python), '-X', 'utf8', str(Path(__file__).resolve()), *sys.argv[1:]], cwd=ROOT)
     if args.check:
         check_environment()
         return 0
+    from setup_local import main as setup
+    setup(['--ensure'])
     for package in ('torch', 'transformers', 'pillow', 'PyAudioWPatch', 'sherpa-onnx', 'windows-capture'):
         importlib.metadata.version(package)
     if not (ROOT / '.tools/ffmpeg.exe').is_file():
-        raise RuntimeError('セットアップが未完了です: py -3.12 setup_local.py')
+        raise RuntimeError('セットアップが未完了です。start.cmd を再実行してください。')
     command = [str(python), '-X', 'utf8', str(ROOT / 'app.py')]
     if args.smoke_test:
         command.append('--smoke-test')

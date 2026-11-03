@@ -6,48 +6,61 @@ YouTube・保存した動画・PCで再生中の音声を、日本語の字幕�
 ## 必要なもの
 
 - Windows 10 / 11、64ビット（x64）。macOS・Linux・Windows ARMは対象外です。
-- [Python 3.12（64ビット、Tcl/Tkを含む）](https://www.python.org/downloads/windows/) と [Git](https://git-scm.com/downloads/win)。Python 3.13以降では動作確認していません。
 - 初回セットアップ用のインターネット接続と、目安として20 GB以上の空き容量。選ぶモデルにより追加容量が必要です。
 - NVIDIA GPUは任意です。対応するドライバーがあればCUDA、GPUがない場合はCPUで利用できます。CPUでのリアルタイム認識は処理が追いつかない場合があります。
+- Pythonは自動で準備します。Gitはクローンする場合だけ必要です。Gitがない場合はGitHubの「Code → Download ZIP」を展開して使えます。
 
-Python Install Managerを使っている場合は `py install 3.12` で3.12を追加できます。
-`py -3.12 --version` で確認してください。仮想環境はこのフォルダーの `.venv` に作ります。
+既存のPython 3.12（64ビット・Tcl/Tk付き）があれば再利用します。見つからない場合は
+[Python公式のWindows配布](https://www.python.org/ftp/python/index-windows.json)にある3.12.10を
+`.python/3.12.10` に取得し、SHA-256で確認して展開します。仮想環境は `.venv` に作ります。
+管理者権限、PATHの手動設定、PowerShellの実行ポリシー変更は不要です。
 
 ## 最初の1回
 
-このリポジトリをクローンして、そのフォルダーでPowerShellを開きます。
+**ダウンロードしたフォルダーの `start.cmd` をダブルクリックしてください。初回の準備からアプリの起動まで自動で進みます。**
+
+Gitを使う場合：
 
 ```powershell
 git clone https://github.com/waterfield2024/mojiokosi.git
 cd mojiokosi
-py -3.12 setup_local.py
+.\start.cmd
 ```
 
-セットアップはPythonライブラリ、FFmpeg、Node.js、話者判別モデル、軽量Whisper baseを取得します。
+セットアップはPython、Pythonライブラリ、FFmpeg、Node.js、話者判別モデル、軽量Whisper baseを取得します。
 NVIDIA GPUを検出した場合はPyTorchのCUDA 12.8版、それ以外はCPU版をインストールします。
+NVIDIA GPUでは**Nemotronのノイズ除去モデルと必要なライブラリも自動で準備**します。
+CUDAの動作確認に失敗した場合はCPU版へ切り替えて、通常の文字起こしを使えるようにします。
+ノイズ除去のオン・オフはアプリで選びます。CPU版ではノイズ除去は使えません。
 モデルとNode.jsは固定した配布元とSHA-256で照合します。ダウンロードには数分以上かかります。
+進み具合は5段階で表示します。失敗した場合は画面を残し、詳細を `.cache/setup.log` に保存します。
+同じ `start.cmd` をもう一度開くと、取得済みのファイルを再利用して準備をやり直します。
+
+次回からはインストール済みのライブラリと必要ファイルを確認して起動します。
+セットアップが完了していて依存関係に変更がなければ、起動時の再インストールや通信は行いません。
+更新版に必要なライブラリが増えたときやファイルが不足しているときは、自動でセットアップを実行します。
+設定、話者名、学習音声、誤変換辞書はそのまま引き継ぎます。
 
 処理方式を指定する場合：
 
 ```powershell
-py -3.12 setup_local.py --device cpu
+.\setup.cmd --device cpu
 # NVIDIA GPU用
-py -3.12 setup_local.py --device cuda
+.\setup.cmd --device cuda
 ```
 
 高精度モデルも先に準備するなら `--model turbo` を追加します。
 `small`、`granite`、`haas` も指定できます。セットアップ後に画面で選んでも、初回利用時に取得します。
 セットアップが途中で失敗した場合は、表示された原因を解消して同じコマンドを再実行してください。
 CPU版とCUDA版を切り替える場合も上記のセットアップを再実行します。
+自動判定へ戻すには `setup.cmd --device auto`。準備だけを行う場合も `setup.cmd` を使います。
+手動で選んだ処理方式と準備モデルは、次回の自動セットアップにも引き継ぎます。
 
 ## 起動
 
-```powershell
-.\.venv\Scripts\python.exe run.py
-```
-
-セットアップ後は `start.cmd` のダブルクリックでも起動できます。
-仮想環境のActivateやPowerShellの実行ポリシー変更は不要です。
+**毎回 `start.cmd` をダブルクリック**します。準備済みならすぐにアプリを開きます。
+Pythonのコマンドを使う場合は `.\.venv\Scripts\python.exe run.py` でも起動できます。
+仮想環境のActivateは不要です。
 
 画面の主な使い方：
 
@@ -93,7 +106,7 @@ PCの再生音声には「PC音声をリアルタイム…」を使います。�
 
 通常画面、またはリアルタイム画面の「認識モデル」で **Haas-ja-v1.0（CPU）** を選びます。
 初回に約481 MBのモデルを取得し、次回から保存済みのモデルを使います。
-事前に取得する場合は `py -3.12 setup_local.py --model haas` を実行してください。
+事前に取得する場合は `setup.cmd --model haas` を実行してください。
 
 - 日本語専用です。言語欄の選択や「話題・専門用語」のヒントは使いません。
 - [公式モデル](https://huggingface.co/third-intelligence/Haas-ja-v1.0)はLinux＋NVIDIA GPU向けのため、
@@ -118,7 +131,7 @@ Whisper・Granite・Haasへ渡す音声だけを処理します。初期状態�
 
 - **元の録音を保持**：録音WAV・保存FLAC・MP4の音声・履歴の音声再生は元の音声です。話者判別や話者の学習にも元の音声を使います。
 - **録音中も切り替え可能**：メイン画面を開き、「PC音声をリアルタイム…」からチェックを切り替えると、次の音声区間から反映します。既に認識した文章は書き換えません。
-- **先読みして再利用**：初回オン時に約39MBの重みを取得します。準備後は停止・再開でも保持します。録音中に初めてオンにした場合は、準備が終わるまで元の音声で認識を続けます。
+- **先読みして再利用**：GPU版の自動セットアップで約39MBの重みを準備します。未取得の場合は初回オン時に取得します。読み込み後は停止・再開でも保持します。録音中に初めてオンにした場合は、準備が終わるまで元の音声で認識を続けます。
 - **遅延・エラー時は継続**：処理が遅い場合やGPUメモリー不足などで失敗した場合、ノイズ除去を休止して元の音声で文字起こしを続けます。理由はチェック欄の下に表示します。再試行はオフ→オンです。
 - **NVIDIA GPUが必要**：CUDA版PyTorchで動きます。処理方式をCPUに固定した場合はノイズ除去を休止します。Haasを選んでも、ノイズ除去自体はGPUで処理します。
 
@@ -152,7 +165,7 @@ YouTube取得とソフト・モデルの初回取得には外部通信を使い�
 
 ```powershell
 git pull --ff-only
-py -3.12 setup_local.py
+.\start.cmd
 ```
 
 設定、話者名、学習音声、誤変換辞書、文字起こし結果は

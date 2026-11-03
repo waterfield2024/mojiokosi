@@ -1,4 +1,8 @@
 @echo off
+setlocal
 cd /d "%~dp0"
-py -3.12 setup_local.py %*
-if errorlevel 1 pause
+call bootstrap.cmd %*
+if errorlevel 1 (
+  pause
+  exit /b 1
+)

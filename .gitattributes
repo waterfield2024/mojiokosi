@@ -2,5 +2,6 @@
 *.py text eol=lf
 *.md text eol=lf
 *.json text eol=lf
-*.cmd text eol=crlf
+# Keep CRLF in the repository too: GitHub ZIP downloads do not apply checkout rules.
+*.cmd -text whitespace=cr-at-eol
 *.ico binary
