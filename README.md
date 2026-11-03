@@ -18,8 +18,8 @@ Python Install Managerを使っている場合は `py install 3.12` で3.12を�
 このリポジトリをクローンして、そのフォルダーでPowerShellを開きます。
 
 ```powershell
-git clone <このリポジトリのURL> whisper-local
-cd whisper-local
+git clone https://github.com/waterfield2024/mojiokosi.git
+cd mojiokosi
 py -3.12 setup_local.py
 ```
 
