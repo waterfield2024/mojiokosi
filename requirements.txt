@@ -1,0 +1,3 @@
+# Tested Windows/Python 3.12 dependency set. PyTorch is installed separately
+# from the official CPU or CUDA index by setup_local.py.
+-r requirements-lock.txt

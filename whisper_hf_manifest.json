@@ -1,0 +1,104 @@
+{
+  "base": {
+    "repo": "openai/whisper-base",
+    "revision": "e37978b90ca9030d5170a5c07aadb050351a65bb",
+    "files": {
+      "config.json": {
+        "size": 1983,
+        "sha256": "a153c53883a6799b6f056b4a8d1a515c9926d03994682ba88a7616618d7da0c1"
+      },
+      "generation_config.json": {
+        "size": 3807,
+        "sha256": "444b3f636d2fff89dd9ecf549e2a085b61f7ff0fa0246d4628bac6a3b8cc9ba4"
+      },
+      "preprocessor_config.json": {
+        "size": 184990,
+        "sha256": "9b5cd03a36fbb8a627c64d98a5b5b126ead95a77720723944487311f0110b666"
+      },
+      "tokenizer.json": {
+        "size": 2480466,
+        "sha256": "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566"
+      },
+      "tokenizer_config.json": {
+        "size": 282683,
+        "sha256": "2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce"
+      },
+      "special_tokens_map.json": {
+        "size": 2194,
+        "sha256": "e67ae3a0aaa99abcd9f187138e12db1f65c16a14761c50ef10eef2c174a7a691"
+      },
+      "model.safetensors": {
+        "size": 290403936,
+        "sha256": "07cadb9f25677c8d50df603e66a98fbd842cce45047139baeb16e6219a1e807b"
+      }
+    }
+  },
+  "small": {
+    "repo": "openai/whisper-small",
+    "revision": "973afd24965f72e36ca33b3055d56a652f456b4d",
+    "files": {
+      "config.json": {
+        "size": 1967,
+        "sha256": "e6a2b489da1b5aed65a8eb8d1e7466fa867ad5643a8bc138ba708bd56b2875c4"
+      },
+      "generation_config.json": {
+        "size": 3868,
+        "sha256": "71565b8ef50d0bf7a1193ed4bbed195b94e70c18894d81bba2f1233dcec3ab53"
+      },
+      "preprocessor_config.json": {
+        "size": 184990,
+        "sha256": "9b5cd03a36fbb8a627c64d98a5b5b126ead95a77720723944487311f0110b666"
+      },
+      "tokenizer.json": {
+        "size": 2480466,
+        "sha256": "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566"
+      },
+      "tokenizer_config.json": {
+        "size": 282683,
+        "sha256": "2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce"
+      },
+      "special_tokens_map.json": {
+        "size": 2194,
+        "sha256": "e67ae3a0aaa99abcd9f187138e12db1f65c16a14761c50ef10eef2c174a7a691"
+      },
+      "model.safetensors": {
+        "size": 966995080,
+        "sha256": "1d7734884874f1a1513ed9aa760a4f8e97aaa02fd6d93a3a85d27b2ae9ca596b"
+      }
+    }
+  },
+  "turbo": {
+    "repo": "openai/whisper-large-v3-turbo",
+    "revision": "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+    "files": {
+      "config.json": {
+        "size": 1256,
+        "sha256": "c5b526b3e3cd64cd8940dabb45e8ba726629e22d8ed389c29b552f9140daf04a"
+      },
+      "generation_config.json": {
+        "size": 3772,
+        "sha256": "cce11bfe3aaa6ae9e072ea2637caaec8795e68d9b67e655a5af16ee509681a4c"
+      },
+      "preprocessor_config.json": {
+        "size": 340,
+        "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"
+      },
+      "tokenizer.json": {
+        "size": 2710337,
+        "sha256": "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd"
+      },
+      "tokenizer_config.json": {
+        "size": 282843,
+        "sha256": "844b642c73a91359722f47b35705f7174686df33d252695d8572cf9ac03a6389"
+      },
+      "special_tokens_map.json": {
+        "size": 2186,
+        "sha256": "baea4ea09372eb4fca86b4e4346139fd73cb807d5087e9de0948e971739c3e74"
+      },
+      "model.safetensors": {
+        "size": 1617824864,
+        "sha256": "542566a422ae4f3fd23f1ba11add198fca01bbf82e66e6a2857b3f608b1eb9d1"
+      }
+    }
+  }
+}

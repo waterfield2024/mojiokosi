@@ -1,0 +1,122 @@
+# Whisper Local
+
+YouTube・保存した動画・PCで再生中の音声を、日本語の字幕にするWindows向けPythonプログラムです。
+ソースをクローンし、自分のPCのPython環境で起動します。独自の起動用EXEは配布しません。
+
+## 必要なもの
+
+- Windows 10 / 11、64ビット（x64）。macOS・Linux・Windows ARMは対象外です。
+- [Python 3.12（64ビット、Tcl/Tkを含む）](https://www.python.org/downloads/windows/) と [Git](https://git-scm.com/downloads/win)。Python 3.13以降では動作確認していません。
+- 初回セットアップ用のインターネット接続と、目安として20 GB以上の空き容量。選ぶモデルにより追加容量が必要です。
+- NVIDIA GPUは任意です。対応するドライバーがあればCUDA、GPUがない場合はCPUで利用できます。CPUでのリアルタイム認識は処理が追いつかない場合があります。
+
+Python Install Managerを使っている場合は `py install 3.12` で3.12を追加できます。
+`py -3.12 --version` で確認してください。仮想環境はこのフォルダーの `.venv` に作ります。
+
+## 最初の1回
+
+このリポジトリをクローンして、そのフォルダーでPowerShellを開きます。
+
+```powershell
+git clone <このリポジトリのURL> whisper-local
+cd whisper-local
+py -3.12 setup_local.py
+```
+
+セットアップはPythonライブラリ、FFmpeg、Node.js、話者判別モデル、軽量Whisper baseを取得します。
+NVIDIA GPUを検出した場合はPyTorchのCUDA 12.8版、それ以外はCPU版をインストールします。
+モデルとNode.jsは固定した配布元とSHA-256で照合します。ダウンロードには数分以上かかります。
+
+処理方式を指定する場合：
+
+```powershell
+py -3.12 setup_local.py --device cpu
+# NVIDIA GPU用
+py -3.12 setup_local.py --device cuda
+```
+
+高精度モデルも先に準備するなら `--model turbo` を追加します。
+`small` と `granite` も指定できます。セットアップ後に画面で選んでも、初回利用時に取得します。
+セットアップが途中で失敗した場合は、表示された原因を解消して同じコマンドを再実行してください。
+CPU版とCUDA版を切り替える場合も上記のセットアップを再実行します。
+
+## 起動
+
+```powershell
+.\.venv\Scripts\python.exe run.py
+```
+
+セットアップ後は `start.cmd` のダブルクリックでも起動できます。
+仮想環境のActivateやPowerShellの実行ポリシー変更は不要です。
+
+画面の主な使い方：
+
+1. YouTubeのURLを貼る、または音声・動画ファイルを選びます。
+2. 「話者判別・文字起こしを開始」を押します。
+3. 結果の文章・話者・時刻を確認して、テキストや字幕付きMP4に保存します。
+
+PCの再生音声には「PC音声をリアルタイム…」を使います。録音のみ・画面録画・ウィンドウ録画を選べます。
+開始後の停止・再開は `Ctrl + Alt + F9`。録画を止めて再開すると、新しい録画として保存します。
+話者名の記憶、学習音声の確認、字幕の縦書き、プレビュー編集、WhisperとGraniteの比較も利用できます。
+詳しい画面操作は [使い方](docs/使い方.txt) を参照してください。
+
+## 文脈AI校正を使う場合だけ
+
+認識・字幕・話者判別はOllamaなしで使えます。文章を文脈で校正する機能には、追加で
+[Ollama for Windows](https://ollama.com/download/windows) と校正モデルを用意します。
+
+```powershell
+ollama pull qwen2.5:7b
+```
+
+Ollamaを起動して、アプリの「文脈AI校正」を有効にしてください。
+新規利用者の自動校正は初期状態でオフです。以前に保存した設定は引き継ぎます。
+音声認識・話者判別・校正はPC内で処理し、APIキーは不要です。
+YouTube取得とソフト・モデルの初回取得には外部通信を使います。
+
+## 更新とデータの引き継ぎ
+
+アプリを終了してから実行します。
+
+```powershell
+git pull --ff-only
+py -3.12 setup_local.py
+```
+
+設定、話者名、学習音声、誤変換辞書、文字起こし結果は
+`%LOCALAPPDATA%\WhisperYouTube\UserData` に保存します。
+同じWindowsユーザーなら従来のWhisper版と共通です。同時起動は避けてください。
+別PCへの移行には画面の「バックアップ・復元」を使います。
+
+`.venv` はPCごとに作成するものです。他PCからコピーせず、移動先でセットアップを実行してください。
+モデル・キャッシュ・設定・音声・録画・バックアップはGitに登録しません。
+
+## 困ったとき
+
+```powershell
+.\.venv\Scripts\python.exe run.py --check
+```
+
+- **Pythonが見つからない**：64ビット版Python 3.12を準備し、`py -3.12 --version` を確認します。
+- **GPUが使えない**：アプリの「処理方式」をCPUに切り替えます。CUDA版のセットアップには対応するNVIDIAドライバーが必要です。GeForce RTX 4070 TiはCUDA対応ですが、この公開版ではその実機の検証はしていません。
+- **文脈校正に失敗する**：Ollamaの起動と `ollama pull qwen2.5:7b` の完了を確認します。
+- **YouTubeを取得できない**：公開状態やサイト側の変更による場合があります。アクセス権のあるローカル動画でも試せます。
+- **Windowsが部品をブロックする**：GitHubから取得したソースでも、依存するPython拡張やFFmpegなどはWindowsの検査対象です。GitHubに置けば自動的に許可されるわけではありません。このセットアップはSmart App Control、Defender、証明書ストア、実行ポリシー、ファイルのブロック状態を変更しません。拒否されたファイル名を確認し、管理されたPCでは管理者へ相談してください。
+
+ログは `.cache/jobs` にあります。ログや画像を公開するときは、音声・字幕・個人のパスが含まれていないか確認してください。
+
+## 検証と開発
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+単体テストは一時的な保存先を使用します。認識精度、話者判別、画面録画は利用環境によって変わります。
+自動字幕は必ず内容を確認してください。
+
+## ライセンス
+
+このプログラムのソースは [MIT License](LICENSE) です。
+Pythonライブラリ・モデル・外部ツールはそれぞれのライセンスに従います。
+配布元と注意点は [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md) に記載しています。
+このプロジェクトはOpenAI、IBM、Microsoftの公式製品ではありません。
