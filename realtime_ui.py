@@ -13,6 +13,7 @@ from asr import COMPUTE_OPTIONS
 from subtitle_overlay import SubtitleOverlay
 from recognition_models import LIVE_MODELS,model_hint
 from speech_preferences import LABELS as SPEECH_LABELS, HINTS as SPEECH_HINTS
+from live_prompt import WHISPER_MODELS
 
 class RealtimeControls:
     def init_realtime(self):
@@ -61,6 +62,7 @@ class RealtimeControls:
         self.live_context = tk.BooleanVar(value=processing["context_correct"])
         self.live_correct = tk.BooleanVar(value=processing["live_correct"])
         self.live_noise = tk.BooleanVar(value=processing['live_noise'])
+        self.live_previous_text = tk.BooleanVar(value=processing['live_previous_text'])
         self.live_sensitivity = tk.StringVar(value=next(label for label, key in SPEECH_LABELS.items()
                                                        if key == processing['speech_sensitivity']))
         self.live_speech_message = tk.StringVar(value=SPEECH_HINTS[processing['speech_sensitivity']])
@@ -182,7 +184,7 @@ class RealtimeControls:
         self.compute.trace_add("write", self.schedule_live_preload)
         for variable in (self.live_diarize, self.live_correct):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=True))
-        for variable in (self.live_context, self.live_chunk):
+        for variable in (self.live_context, self.live_chunk, self.live_previous_text):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=False))
 
     def update_live_controls(self):
@@ -202,6 +204,7 @@ class RealtimeControls:
             self.live_refresh.configure(state="disabled" if busy or self.live_devices_loading else "normal")
             self.live_model_combo.configure(state="disabled" if busy else "readonly")
             self.live_chunk_combo.configure(state="disabled" if busy else "readonly")
+            self.live_previous_check.configure(state='normal' if not busy and LIVE_MODELS[self.live_model.get()] in WHISPER_MODELS else 'disabled')
             self.update_screen_controls()
             for control in self.live_post_controls:
                 control.configure(state="disabled" if busy else "normal")
@@ -282,6 +285,10 @@ class RealtimeControls:
         self.live_model_message = tk.StringVar(value=model_hint(LIVE_MODELS[self.live_model.get()]))
         ttk.Label(frame,textvariable=self.live_model_message,style="Sub.TLabel",wraplength=650).pack(anchor="w",pady=(0,8))
         self.live_model_combo.bind("<<ComboboxSelected>>",lambda event:self.live_model_message.set(model_hint(LIVE_MODELS[self.live_model.get()])),add="+")
+        self.live_previous_check = ttk.Checkbutton(frame, text='前の文章を参考に認識する（Whisper）', variable=self.live_previous_text)
+        self.live_previous_check.pack(anchor='w')
+        ttk.Label(frame, text='直近2つの発言を参考にします。6秒以上の無音でリセット／開始前に変更可',
+                  style='Sub.TLabel', wraplength=650).pack(anchor='w', pady=(0, 8))
         noise_row = ttk.Frame(frame)
         noise_row.pack(fill='x', pady=(0, 3))
         self.live_noise_check = ttk.Checkbutton(noise_row, text='Nemotronでノイズ除去（認識用のみ）', variable=self.live_noise)
@@ -514,6 +521,7 @@ class RealtimeControls:
         return processing_preferences({"live_diarize": self.live_diarize.get(), "live_correct": self.live_correct.get(),
                                        "context_correct": self.live_context.get(), "chunk_seconds": int(self.live_chunk.get()),
                                        'live_noise': self.live_noise.get(),
+                                       'live_previous_text': self.live_previous_text.get(),
                                        'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()]})
 
     def change_live_sensitivity(self, *args):
@@ -690,6 +698,7 @@ class RealtimeControls:
                    "num_speakers": self.speaker_count(), "context_correct": self.live_context.get(),
                    "live_correct": self.live_correct.get(),
                    "live_noise": self.live_noise.get(),
+                   'live_previous_text': self.live_previous_text.get(),
                    'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()],
                    "correction_rules": self.automatic_correction_rules(),
                    "speaker_memory_file": str(self.speaker_memory.path)}

@@ -33,9 +33,9 @@ def processing_preferences(data=None, *, context_default=False):
     if data is None:data = {}
     if not isinstance(data, dict):raise ValueError("リアルタイムの処理設定が正しくありません。")
     saved = {}
-    for key, default in (("live_diarize", True), ("live_correct", False), ("context_correct", context_default), ("live_noise", False)):
+    for key, default in (("live_diarize", True), ("live_correct", False), ("context_correct", context_default), ("live_noise", False), ('live_previous_text', True)):
         value = data.get(key, default)
-        if type(value) is not bool:raise ValueError("話者判別・自動修正・ノイズ除去の設定はオンかオフを選んでください。")
+        if type(value) is not bool:raise ValueError("リアルタイムの処理設定はオンかオフを選んでください。")
         saved[key] = value
     seconds = data.get("chunk_seconds", 2)
     if type(seconds) is not int or seconds not in CHUNK_SECONDS:

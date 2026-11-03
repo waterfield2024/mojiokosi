@@ -16,6 +16,7 @@ from recognition_models import ALLOWED_MODELS, GRANITE_MODEL, HAAS_MODEL, recogn
 from user_data import data_path
 from speech_gate import SpeechGate, overlaps_speech, keep_spoken_rows
 from speech_preferences import profile as speech_profile, read_control as speech_control
+from live_prompt import WHISPER_MODELS, make_prompt, reliable, transcribe_with_prompt
 
 def next_live_chunk(chunks, pending, max_samples):
     """Catch up by joining queued audio, never dropping unrecognized speech."""
@@ -34,7 +35,7 @@ def next_live_chunk(chunks, pending, max_samples):
         b = following[1]
     return a, b, core
 
-def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=None, speech=None, sensitivity='balanced'):
+def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=None, speech=None, sensitivity='balanced', context_prompt=None):
     """Reuse concurrent recognition for one voice; retain exact cuts for turn changes."""
     result = prefetched.result() if prefetched is not None else None
     rows = []
@@ -45,7 +46,8 @@ def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=No
         if speech is not None and not overlaps_speech(speech, max(core, pa), pb, sensitivity):
             continue
         if result is None or pa != a or pb != b:
-            current_result = recognizer.transcribe(pcm[(pa - a) * 2:(pb - a) * 2])
+            hint = context_prompt(max(core, pa), pb, previous + rows) if context_prompt else None
+            current_result = transcribe_with_prompt(recognizer, pcm[(pa - a) * 2:(pb - a) * 2], hint)
         else:
             current_result = result
         current = live_rows(current_result, pa, pb, max(core, pa), previous + rows)
@@ -107,6 +109,7 @@ def live_rows(result, start, end, core, previous):
             continue
         row = {"id": uuid.uuid4().hex, "start": round(a, 3), "end": round(max(a, b), 3),
                "text": text, "words": words, "speaker": "", "speaker_review": True}
+        row['live_prompt_eligible'] = reliable(raw)
         row["segment_id"] = row["id"]
         rows.append(row)
     return rows
@@ -124,6 +127,10 @@ def run_live(request, job, models=None):
         raise ValueError("認識設定が正しくありません。")
     seconds = max(2, min(10, int(request.get("chunk_seconds", 2))))
     sensitivity = speech_profile(request.get('speech_sensitivity', 'balanced')).key
+    use_previous = request.get('live_previous_text', True)
+    if type(use_previous) is not bool:
+        raise ValueError('前の文章を参考に認識する設定はオンかオフを選んでください。')
+    use_previous = use_previous and model in WHISPER_MODELS
     prompt = str(request.get("prompt", ""))[:1000]
     rules = normalize_rules(request.get("correction_rules", []))
     if rules:
@@ -138,6 +145,7 @@ def run_live(request, job, models=None):
             "model": model, "language": recognition_language(model, request.get("language", "ja")), "prompt": prompt,
             "segments": [], "speakers": {}, "live_incomplete": True, "recording_complete": False,
             "recording_device": request["device"]["name"]}
+    data['live_previous_text'] = use_previous
     # A checkpoint exists even if capture or the engine later fails.
     write_json(folder / "result.json", data)
     emit("checkpoint", result_path=str(folder / "result.json"))
@@ -327,8 +335,16 @@ def run_live(request, job, models=None):
                 write_json(folder / 'result.json', data)
                 emit('status', text='発話待ち…（無音・雑音の区間は字幕にしません）')
                 continue
+            def context_prompt(start, end, history):
+                # Use audio time, not processing time: delayed chunks must keep
+                # their original context and long pauses must break it.
+                voice_start = min((max(start, x) for x, y in speech if y > start and x < end), default=start)
+                return make_prompt(prompt, history, voice_start / RATE)
+            prompt_for = context_prompt if use_previous else None
+            previous = list(data['segments'])
+            hint = prompt_for(max(a, core), b, previous) if prompt_for and live_diarizer else None
             # ASR runs in a separate native process and can overlap the CPU speaker model.
-            prefetched = inference.submit(recognizer.transcribe, pcm) if live_diarizer else None
+            prefetched = inference.submit(transcribe_with_prompt, recognizer, pcm, hint) if live_diarizer else None
             turns = []
             if live_diarizer:
                 emit("status", text="再生中の声を判別しています…")
@@ -356,9 +372,8 @@ def run_live(request, job, models=None):
                     emit("warning", title="リアルタイム話者判別", message="話者解析を継続できないため、話者不明で録音を続けます。\n" + str(exc))
             ranges = (speaker_ranges(turns, a / RATE, b / RATE) if live_speakers else
                       [{"start": a / RATE, "end": b / RATE, "speaker": "", "speaker_review": False}])
-            previous = list(data["segments"])
             lag = max(0, capture.total / RATE - b / RATE)
-            for rows, part in recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched, speech, sensitivity):
+            for rows, part in recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched, speech, sensitivity, prompt_for):
                 for row in rows:
                     row['noise_reduced'] = noise_applied
                 if live_speakers:
