@@ -21,6 +21,7 @@ from speaker_memory_ui import SpeakerMemoryControls
 from correction_ui import CorrectionControls
 from context_ui import ContextControls
 from realtime_ui import RealtimeControls
+from history_ui import HistoryControls
 from comparison_ui import ComparisonControls
 from context_ai import ensure_segment_ids
 from speakers import normalize_names
@@ -32,7 +33,7 @@ from recognition_models import FILE_MODELS as MODEL_OPTIONS,model_hint
 LANG_OPTIONS = {"日本語": "ja", "自動判定": "auto", "英語": "en"}
 
 
-class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextControls, RealtimeControls, ComparisonControls):
+class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextControls, RealtimeControls, ComparisonControls, HistoryControls):
     def __init__(self, root):
         from user_data import initialize
         initialize()
@@ -62,6 +63,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.init_corrections()
         self.init_context()
         self.init_realtime()
+        self.init_history()
         self.init_comparison()
         self.init_speaker_memory()
         self.build()
@@ -169,6 +171,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         result_heading.pack(fill="x", pady=(0, 8))
         self.reanalyze_button = ttk.Button(result_heading, text="話者を再判別", command=self.analyze_saved, state="disabled")
         self.reanalyze_button.pack(side="right")
+        ttk.Button(result_heading, text="履歴・検索", command=self.open_history).pack(side="right", padx=(0, 6))
         table_frame = ttk.Frame(result_box)
         table_frame.pack(fill="both", expand=True)
         self.table = TranscriptTree(table_frame, columns=("start", "end", "speaker", "text"),
@@ -281,6 +284,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
                     self.manual_memory_status.set(f"文章は修正済みですが、記憶は未保存です。保存時に再試行します：{exc}")
                 self.memory_status.set(self.manual_memory_status.get())
             self.table.item(self.selected, values=self.row_values(row))
+            if changed:
+                self.refresh_history()
 
     def select(self, event=None):
         selected = self.table.selection()
@@ -332,6 +337,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.root.title(f"Whisper（話者対応） — {data.get('title', '文字起こし結果')}")
         self.update_video_controls()
         self.resume_correction_learning()
+        self.refresh_history()
         if self.context_window and self.context_window.winfo_exists():
             self.context_window.refresh()
 
@@ -634,6 +640,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         except queue.Empty:
             pass
         if self.live_shortcut:self.live_shortcut.pump()
+        self.pump_history()
         if self.proc and not self.completed:
             elapsed = int(time.monotonic() - self.started)
             self.status.set(f"{self.stage}   経過 {elapsed // 60:02}:{elapsed % 60:02}")
@@ -694,6 +701,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             self.result_data["speakers"] = self.speakers
             edited = self.result_path.parent / "edited.json"
             edited.write_text(json.dumps(self.result_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.refresh_history()
 
     def copy(self):
         self.commit()
@@ -730,6 +738,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             "字幕は先に表示し、日本語の漢字の誤変換だけを文脈AIで後から修正します。\n"
             "校正が遅い場合は字幕を優先します。録音中も「文脈AI校正」から確認・取り消しができます。\n"
             "停止後もモデルを保持して再開に使い、Whisperアプリを終了すると解放します。\n"
+            "画面端の履歴には直近100件を表示します。検索欄で今の文字起こし全文から単語を探せます。\n"
+            "「履歴・検索」から開けます。スクロール中は追従を止め、「最新へ」で最新の発言に戻ります。\n"
             "字幕の位置をプレビューで調整し、音声出力を選んで開始してください。\n"
             "リアルタイム中も話者を自動判別し、字幕に名前を表示します。\n"
             "覚えた声の名前は、YouTube・動画の文字起こしとリアルタイム字幕で自動表示します。\n"

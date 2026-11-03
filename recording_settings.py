@@ -55,7 +55,7 @@ def display_preferences(data=None):
     return saved
 
 
-def settings_for(mode, targets, model="base", audio_device=None, overlay=None, processing=None, display=None):
+def settings_for(mode, targets, model="base", audio_device=None, overlay=None, processing=None, display=None, history=None):
     if not isinstance(mode, str) or mode not in MODES or not isinstance(targets, dict):
         raise ValueError("録画設定の形式が正しくありません。")
     if not isinstance(model, str) or not 0 < len(model) <= 256:
@@ -81,11 +81,12 @@ def settings_for(mode, targets, model="base", audio_device=None, overlay=None, p
             raise ValueError("録画対象の設定が空です。")
         saved[kind] = target
     from overlay_preferences import preferences
-    return {"version": 5, "mode": mode, "targets": saved,
+    from transcript_history import preferences as history_preferences
+    return {"version": 6, "mode": mode, "targets": saved,
             "model": model, "audio_device": audio_preference(audio_device), "overlay": preferences(overlay),
             # Legacy settings inherit the existing global post-correction default once.
             "processing": None if processing is None else processing_preferences(processing),
-            "display": display_preferences(display)}
+            "display": display_preferences(display), "history": history_preferences(history)}
 
 
 def load_settings():
@@ -93,14 +94,14 @@ def load_settings():
         data = json.loads(settings_path().read_text("utf-8-sig"))
     except FileNotFoundError:
         return settings_for("audio", {})
-    if not isinstance(data, dict) or data.get("version") not in (1, 2, 3, 4, 5):
+    if not isinstance(data, dict) or data.get("version") not in (1, 2, 3, 4, 5, 6):
         raise ValueError("録画設定を読み込めませんでした。保存する内容を選び直してください。")
-    return settings_for(data.get("mode"), data.get("targets"), data.get("model", "base"), data.get("audio_device"), data.get("overlay"), data.get("processing"), data.get("display"))
+    return settings_for(data.get("mode"), data.get("targets"), data.get("model", "base"), data.get("audio_device"), data.get("overlay"), data.get("processing"), data.get("display"), data.get("history"))
 
 
 def save_settings(data):
     from context_ai import write_json
-    write_json(settings_path(), settings_for(data.get("mode"), data.get("targets"), data.get("model", "base"), data.get("audio_device"), data.get("overlay"), data.get("processing"), data.get("display")))
+    write_json(settings_path(), settings_for(data.get("mode"), data.get("targets"), data.get("model", "base"), data.get("audio_device"), data.get("overlay"), data.get("processing"), data.get("display"), data.get("history")))
 
 
 def match_target(mode, previous, candidates, *, allow_reopened=False):

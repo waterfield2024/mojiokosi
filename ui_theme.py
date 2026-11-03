@@ -152,6 +152,8 @@ def _refresh_widgets(widget):
     role = getattr(widget, "_whisper_theme_role", None)
     if role == "text":
         style_text(widget)
+        if hasattr(widget, '_whisper_refresh_tags'):
+            widget._whisper_refresh_tags()
     elif role == "brand":
         widget.configure(background=colors["page"])
         widget.itemconfigure("wave", fill=colors["accent"])

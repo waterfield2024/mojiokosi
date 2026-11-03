@@ -261,6 +261,11 @@ class RealtimeControls:
         self.live_lock_check = ttk.Checkbutton(row, text="位置を固定（動画をクリック可能）", variable=self.live_lock,
                                               command=self.lock_overlay)
         self.live_lock_check.pack(side="left", padx=12)
+        history = ttk.Frame(subtitle)
+        history.pack(fill="x", pady=(6, 0))
+        ttk.Checkbutton(history, text="画面端に文字起こし履歴を表示", variable=self.history_visible,
+                        command=self.toggle_history).pack(side="left")
+        ttk.Button(history, text="履歴・検索を開く", command=self.open_history).pack(side="left", padx=12)
         row = ttk.Frame(subtitle); row.pack(fill="x", pady=8)
         ttk.Button(row, text="位置を調整・プレビュー", command=self.preview_overlay).pack(side="left")
         ttk.Label(row, text="文字サイズ").pack(side="left", padx=(18, 5))
@@ -344,7 +349,8 @@ class RealtimeControls:
         try:
             data = settings_for(self.live_capture_mode.get(), self.live_target_selections,
                                 LIVE_MODELS[self.live_model.get()], self.live_saved_audio_device, self.live_overlay_settings,
-                                self.live_processing_settings(), {"show": self.live_show.get(), "locked": self.live_lock.get()})
+                                self.live_processing_settings(), {"show": self.live_show.get(), "locked": self.live_lock.get()},
+                                {"visible": self.history_visible.get(), "limit": self.history_limit, "side": self.history_side})
             if data != self.live_saved_record_settings:
                 save_settings(data)
                 self.live_saved_record_settings = data
@@ -572,6 +578,8 @@ class RealtimeControls:
                 selected_screen = validate_target(self.live_screens[screen_index])
                 if selected_screen.get("kind") != "window" and not self.ensure_overlay().capture_excluded:
                     raise RuntimeError("字幕を録画から除外できませんでした。Windowsを更新してアプリを起動し直してください。録音のみは利用できます。")
+                if self.history_visible.get() and not self.ensure_history().capture_excluded:
+                    raise RuntimeError("履歴を録画から除外できませんでした。「画面端に文字起こし履歴を表示」をオフにしてから録画してください。")
             except Exception as exc:
                 messagebox.showerror("画面録画を開始できません", str(exc), parent=self.live_window)
                 return
@@ -734,6 +742,8 @@ class RealtimeControls:
             label = "取り込み中・画面録画ON" if self.live_active_mode == "screen" else "取り込み中・録音のみ"
             self.stage = f"{label} / {event['device']} — 動画を再生してください。"
             self.live_message.set(self.stage)
+            if self.history_visible.get():
+                self.open_history()
             self.update_video_controls()
             return True
         if kind == "live_meter":
@@ -779,6 +789,7 @@ class RealtimeControls:
                     self.overlay.set_speakers(self.speakers)
                     self.overlay.push_segments(event["segments"])
             self.refresh_speaker_rows()
+            self.refresh_history()
             self.check_pending_memories()
             self.update_speaker_controls()
             self.update_live_controls()
@@ -807,6 +818,7 @@ class RealtimeControls:
 
     def refresh_live_corrected_text(self):
         self.refresh_speaker_rows()
+        self.refresh_history()
         if self.selected is not None:
             self.editor.configure(state="normal")
             self.editor.delete("1.0", "end")

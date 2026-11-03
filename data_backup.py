@@ -62,9 +62,9 @@ def _validate(folder, original_root, *, allow_local_sources=False):
         if name == 'corrections.json': normalize_settings(data)
         elif name == 'recording_settings.json':
             from recording_settings import settings_for
-            if data.get('version') not in (1, 2, 3, 4, 5): raise ValueError('録画設定のバージョンを確認してください。')
+            if data.get('version') not in (1, 2, 3, 4, 5, 6): raise ValueError('録画設定のバージョンを確認してください。')
             settings_for(data.get('mode'), data.get('targets'), data.get('model', 'base'), data.get('audio_device'),
-                         data.get('overlay'), data.get('processing'), data.get('display'))
+                         data.get('overlay'), data.get('processing'), data.get('display'), data.get('history'))
         elif name == 'window_settings.json':
             from window_settings import validated
             validated(data)
