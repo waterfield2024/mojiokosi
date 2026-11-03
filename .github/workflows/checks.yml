@@ -5,6 +5,10 @@ permissions:
 jobs:
   checks:
     runs-on: windows-latest
+    env:
+      # Match bootstrap.cmd: Japanese setup messages use UTF-8 on every locale.
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
