@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import uuid
 import tkinter as tk
 from tkinter import ttk, messagebox, font as tkfont
 from engine import ROOT, NO_WINDOW
@@ -58,6 +59,8 @@ class RealtimeControls:
         self.live_diarize = tk.BooleanVar(value=processing["live_diarize"])
         self.live_context = tk.BooleanVar(value=processing["context_correct"])
         self.live_correct = tk.BooleanVar(value=processing["live_correct"])
+        self.live_noise = tk.BooleanVar(value=processing['live_noise'])
+        self.live_noise_message = tk.StringVar(value='ノイズ除去：準備前' if self.live_noise.get() else 'ノイズ除去：OFF（元の音声で認識）')
         self.live_context_message = tk.StringVar(value="字幕は先に表示し、校正できた部分を後から差し替えます。" if self.live_correct.get() else "字幕の自動修正：OFF")
         self.live_show = tk.BooleanVar(value=settings["display"]["show"])
         self.live_lock = tk.BooleanVar(value=settings["display"]["locked"])
@@ -98,7 +101,7 @@ class RealtimeControls:
     def live_model_settings(self):
         return {"model": LIVE_MODELS[self.live_model.get()],
                 "compute": COMPUTE_OPTIONS[self.compute.get()], "live_diarize": self.live_diarize.get(),
-                "live_correct": self.live_correct.get()}
+                "live_correct": self.live_correct.get(), "live_noise": self.live_noise.get()}
 
     def schedule_live_preload(self, *args):
         if self.proc or not self.live_window or not self.live_window.winfo_exists():
@@ -169,6 +172,7 @@ class RealtimeControls:
         self.live_button = ttk.Button(parent, text="PC音声をリアルタイム…", command=self.open_live)
         self.live_button.pack(side="right")
         self.live_model.trace_add("write", self.change_live_model)
+        self.live_noise.trace_add('write', self.change_live_noise)
         self.compute.trace_add("write", self.schedule_live_preload)
         for variable in (self.live_diarize, self.live_correct):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=True))
@@ -212,8 +216,27 @@ class RealtimeControls:
         win.geometry("840x820")
         win.minsize(760, 780)
         win.transient(self.root)
-        frame = ttk.Frame(win, padding=18)
-        frame.pack(fill="both", expand=True)
+        shell = ttk.Frame(win, padding=18)
+        shell.pack(fill='both', expand=True)
+        actions = ttk.Frame(shell)
+        actions.pack(side='bottom', fill='x', pady=(8, 0))
+        body = ttk.Frame(shell)
+        body.pack(fill='both', expand=True)
+        from ui_theme import palette
+        canvas = self.live_settings_canvas = tk.Canvas(body, highlightthickness=0, background=palette(win)['surface'])
+        scroll = ttk.Scrollbar(body, orient='vertical', command=canvas.yview)
+        scroll.pack(side='right', fill='y')
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        canvas._whisper_refresh_tags = lambda: canvas.configure(background=palette(win)['surface'])
+        frame = ttk.Frame(canvas)
+        content = canvas.create_window(0, 0, window=frame, anchor='nw')
+        frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(content, width=e.width))
+        def scroll_settings(event):
+            if event.widget.winfo_class() not in {'TCombobox', 'Text'} and canvas.yview() != (0., 1.):
+                canvas.yview_scroll(-int(event.delta/120), 'units')
+        win.bind('<MouseWheel>', scroll_settings, add='+')
         ttk.Label(frame, text="動画を再生しながら、字幕を重ねて表示", font=("Yu Gothic UI", 16, "bold")).pack(anchor="w")
         ttk.Label(frame, text="選んだスピーカー／ヘッドホンの音声を取り込みます。マイクは使いません。").pack(anchor="w", pady=(4, 12))
         ttk.Label(frame, text="動画の音声を再生している出力先").pack(anchor="w")
@@ -253,6 +276,14 @@ class RealtimeControls:
         self.live_model_message = tk.StringVar(value=model_hint(LIVE_MODELS[self.live_model.get()]))
         ttk.Label(frame,textvariable=self.live_model_message,style="Sub.TLabel",wraplength=650).pack(anchor="w",pady=(0,8))
         self.live_model_combo.bind("<<ComboboxSelected>>",lambda event:self.live_model_message.set(model_hint(LIVE_MODELS[self.live_model.get()])),add="+")
+        noise_row = ttk.Frame(frame)
+        noise_row.pack(fill='x', pady=(0, 3))
+        self.live_noise_check = ttk.Checkbutton(noise_row, text='Nemotronでノイズ除去（認識用のみ）', variable=self.live_noise)
+        self.live_noise_check.pack(side='left')
+        ttk.Label(noise_row, text='元の録音を保持／録音中も切り替え可', style='Sub.TLabel').pack(side='left', padx=8)
+        noise_hint = ttk.Label(frame, textvariable=self.live_noise_message, style='Sub.TLabel', wraplength=680)
+        noise_hint.pack(anchor='w', fill='x', pady=(0, 6))
+        noise_hint.bind('<Configure>', lambda e: noise_hint.configure(wraplength=max(200, e.width)))
         subtitle = ttk.LabelFrame(frame, text="動画に重ねる字幕", padding=10)
         subtitle.pack(fill="x")
         row = ttk.Frame(subtitle); row.pack(fill="x")
@@ -306,7 +337,7 @@ class RealtimeControls:
         status_label = ttk.Label(status_area, textvariable=self.live_message, wraplength=640)
         status_label.pack(fill="x", anchor="w")
         status_area.bind("<Configure>", lambda e: status_label.configure(wraplength=max(300, e.width)))
-        row = ttk.Frame(frame); row.pack(side="bottom", fill="x", before=frame.winfo_children()[0])
+        row = actions
         self.live_start_button = ttk.Button(row, text="リアルタイム開始", style="Accent.TButton", command=self.start_live)
         self.live_start_button.pack(side="left")
         self.live_stop_button = ttk.Button(row, text="停止して保存", command=self.cancel)
@@ -465,7 +496,21 @@ class RealtimeControls:
     def live_processing_settings(self):
         from recording_settings import processing_preferences
         return processing_preferences({"live_diarize": self.live_diarize.get(), "live_correct": self.live_correct.get(),
-                                       "context_correct": self.live_context.get(), "chunk_seconds": int(self.live_chunk.get())})
+                                       "context_correct": self.live_context.get(), "chunk_seconds": int(self.live_chunk.get()),
+                                       'live_noise': self.live_noise.get()})
+
+    def change_live_noise(self, *args):
+        self.persist_live_recording_settings()
+        if self.proc and self.operation == 'realtime':
+            from context_ai import write_json
+            try:
+                write_json(self.job / 'noise-control.json', {'enabled': self.live_noise.get(), 'token': uuid.uuid4().hex})
+                self.live_noise_message.set('ノイズ除去を次の音声区間から' + ('オンにします。準備中は元の音声で認識します。' if self.live_noise.get() else 'オフにします。'))
+            except OSError as exc:
+                self.live_noise_message.set('ノイズ除去の切り替えを送信できませんでした：' + str(exc))
+        elif not self.proc:
+            self.live_noise_message.set('ノイズ除去を準備しています…' if self.live_noise.get() else 'ノイズ除去：OFF（元の音声で認識）')
+            self.schedule_live_preload()
 
     def change_live_processing(self, *, preload):
         self.persist_live_recording_settings()
@@ -611,6 +656,7 @@ class RealtimeControls:
                    "chunk_seconds": int(self.live_chunk.get()), "live_diarize": self.live_diarize.get(), "diarize": False,
                    "num_speakers": self.speaker_count(), "context_correct": self.live_context.get(),
                    "live_correct": self.live_correct.get(),
+                   "live_noise": self.live_noise.get(),
                    "correction_rules": self.automatic_correction_rules(),
                    "speaker_memory_file": str(self.speaker_memory.path)}
         try:
@@ -642,6 +688,9 @@ class RealtimeControls:
     def handle_live_event(self, event):
         kind = event["kind"]
         if self.live_shortcut and self.live_shortcut.handle(event):return True
+        if kind == 'live_noise_status':
+            self.live_noise_message.set(event['text'])
+            return True
         if kind == "live_recording_status":
             self.live_record_status.set(event["text"])
             if event["text"].startswith("画面録画が停止"):
@@ -698,6 +747,8 @@ class RealtimeControls:
                 return True
             if kind == "live_preload_ready":
                 self.live_preload_phase = "ready"
+                if event.get('noise'):
+                    self.live_noise_message.set(event['noise']['text'])
             elif kind == "live_preload_error":
                 self.live_preload_phase = "error"
                 self.live_preload_text = event["message"]

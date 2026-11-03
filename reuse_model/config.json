@@ -1,0 +1,40 @@
+{
+  "env_setting": {
+    "checkpoint_interval": 5000,
+    "dist_cfg": {
+      "dist_backend": "nccl",
+      "dist_url": "tcp://localhost:19478",
+      "world_size": 1
+    },
+    "num_gpus": 8,
+    "num_workers": 20,
+    "persistent_workers": true,
+    "pin_memory": true,
+    "prefetch_factor": 8,
+    "seed": 1234,
+    "stdout_interval": 5000,
+    "validation_interval": 5000
+  },
+  "model_cfg": {
+    "beta": 2.0,
+    "compress_factor": "relu_log1p",
+    "d_conv": 4,
+    "d_state": 16,
+    "expand": 4,
+    "hid_feature": 64,
+    "inner_mamba_nlayer": 1,
+    "input_channel": 2,
+    "mapping": true,
+    "nonlinear": "None",
+    "norm_epsilon": 1e-05,
+    "num_tfmamba": 30,
+    "output_channel": 1
+  },
+  "stft_cfg": {
+    "hop_size": 40,
+    "n_fft": 320,
+    "sampling_rate": 8000,
+    "sfi": true,
+    "win_size": 320
+  }
+}

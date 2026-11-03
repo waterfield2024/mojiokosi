@@ -154,6 +154,22 @@ def run_live(request, job, models=None):
     context_seen = set()
     context_state = ""
     slow_chunks = 0
+    from live_noise import LiveNoiseReducer, update_control
+    from reuse_assets import REPO, REVISION
+    noise = models.noise if models else LiveNoiseReducer(job, stopped)
+    data['noise_reduction'] = {'model': REPO, 'revision': REVISION, 'recording_audio': 'original',
+                               'applied_chunks': 0, 'bypassed_chunks': 0}
+    noise_state = None
+
+    def service_noise():
+        nonlocal noise_state
+        update_control(noise, job)
+        noise.pump()
+        state = noise.snapshot()
+        data['noise_reduction'].update(requested=state['enabled'], state=state['state'], message=state['text'])
+        if state != noise_state:
+            emit('live_noise_status', **state)
+            noise_state = state
 
     def service_context(submit=True):
         nonlocal context_state
@@ -191,6 +207,8 @@ def run_live(request, job, models=None):
             recognizer_type = live_recognizer_type(model)
             recognizer = recognizer_type(model, data["language"], prompt, request.get("compute", "auto"), job,
                                         status, stopped)
+        noise.prepare(request.get('live_noise', False), request.get('compute', 'auto'), status, stopped)
+        service_noise()
         if live_speakers:
             emit("status", text="リアルタイム話者判別を準備中…")
             try:
@@ -243,6 +261,7 @@ def run_live(request, job, models=None):
         # Optional bounded sessions are also useful for automated end-to-end validation.
         limit = float(request.get("max_seconds", 0))
         while True:
+            service_noise()
             service_context()
             if limit and time.monotonic() - start_time >= limit:
                 capture.stop()
@@ -259,6 +278,11 @@ def run_live(request, job, models=None):
             with wav.open("rb") as file:
                 file.seek(44 + a * 2)
                 pcm = file.read((b - a) * 2)
+            # Only this in-memory ASR copy is enhanced. The recording WAV remains
+            # the source for playback, video export, voice profiles and diarization.
+            pcm, noise_applied = noise.process(pcm)
+            data['noise_reduction']['applied_chunks' if noise_applied else 'bypassed_chunks'] += 1
+            service_noise()
             apply_live_edits(data, folder)
             # ASR runs in a separate native process and can overlap the CPU speaker model.
             prefetched = inference.submit(recognizer.transcribe, pcm) if live_diarizer else None
@@ -291,6 +315,8 @@ def run_live(request, job, models=None):
                       [{"start": a / RATE, "end": b / RATE, "speaker": "", "speaker_review": False}])
             previous = list(data["segments"])
             for rows, part in recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched):
+                for row in rows:
+                    row['noise_reduced'] = noise_applied
                 if live_speakers:
                     live_turns.append({**part, "start": max(core / RATE, part["start"])})
                 data["segments"].extend(rows)
@@ -353,6 +379,8 @@ def run_live(request, job, models=None):
                 recorder.close()
         if inference:
             inference.shutdown(wait=True, cancel_futures=True)
+        if not models:
+            noise.close()
         service_context(submit=False)
         if proofreader and (not models or request.get("context_correct", False)):
             proofreader.close()

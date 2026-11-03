@@ -18,6 +18,8 @@ class LiveModels:
         self.closing = closing
         self.recognizer = self.diarizer = None
         self.proofreader = None
+        from live_noise import LiveNoiseReducer
+        self.noise = LiveNoiseReducer(self.folder, self.closing)
         self.key = None
 
     @staticmethod
@@ -85,7 +87,8 @@ class LiveModels:
         if stopped():
             raise LiveStopped()
         self.proofreader_for(request)
-        return {**self.info(), 'speaker_warning': warning}
+        noise = self.noise.prepare(request.get('live_noise', False), request.get('compute', 'auto'), status, stopped)
+        return {**self.info(), 'speaker_warning': warning, 'noise': noise}
 
     def proofreader_for(self, request):
         from live_context import LiveProofreader
@@ -108,6 +111,7 @@ class LiveModels:
                 'recognizer_pid': self.recognizer.proc.pid if self.alive(self.recognizer) else None,
                 'speaker_pid': self.diarizer.proc.pid if self.alive(self.diarizer) else None,
                 'proofreader_pid': self.proofreader.proc.pid if self.alive(self.proofreader) else None,
+                'noise': self.noise.snapshot(),
                 'speaker_profiles': len(self.diarizer.profiles) if self.alive(self.diarizer) else 0}
 
     def park(self):
@@ -118,6 +122,7 @@ class LiveModels:
             self.diarizer.stopped = self.closing
 
     def close(self):
+        self.noise.close()
         for worker in (self.recognizer, self.diarizer, self.proofreader):
             if worker:
                 worker.close()

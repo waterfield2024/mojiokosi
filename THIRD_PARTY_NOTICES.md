@@ -12,6 +12,8 @@ Installations/downloads made by `setup_local.py` remain outside version control.
 | Whisper models | https://github.com/openai/whisper — MIT; pinned Hugging Face revisions in `whisper_hf_manifest.json` |
 | Granite Speech 5.0 TurboCTC | https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc — Apache-2.0; revision in `granite_model_manifest.json` |
 | Haas-ja-v1.0 | Third Intelligence: https://huggingface.co/third-intelligence/Haas-ja-v1.0 — Apache-2.0 |
+| NVIDIA NemotronLabs RE-USE | https://huggingface.co/nvidia/NVIDIA-NemotronLabs-RE-USE — OpenMDW-1.1. Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. Model code and configuration in `reuse_model/`; full license retained in `reuse_model/LICENSE`. Revision and weights checksum in `reuse_assets.py`. See `reuse_model/README.md` for local modifications. |
+| einops 0.8.1 | https://github.com/arogozhnikov/einops — MIT |
 | Haas community ONNX conversion | oboroge0: https://huggingface.co/oboroge0/Haas-ja-v1.0-onnx-quantized — Apache-2.0; pinned revision and hashes in `haas_model_manifest.json`; original LICENSE and NOTICE retained in `licenses/Haas-LICENSE` and `licenses/Haas-NOTICE`. Unofficial quantized CPU conversion, not endorsed by Third Intelligence. |
 | sherpa-onnx | https://github.com/k2-fsa/sherpa-onnx — Apache-2.0 |
 | Pyannote segmentation 3.0 ONNX | sherpa-onnx `speaker-segmentation-models` release; supplied model license retained in `licenses/segmentation-LICENSE` |
