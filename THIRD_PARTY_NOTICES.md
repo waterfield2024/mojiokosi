@@ -11,6 +11,8 @@ Installations/downloads made by `setup_local.py` remain outside version control.
 | Transformers and Hugging Face libraries | https://github.com/huggingface/transformers — Apache-2.0 and component licenses |
 | Whisper models | https://github.com/openai/whisper — MIT; pinned Hugging Face revisions in `whisper_hf_manifest.json` |
 | Granite Speech 5.0 TurboCTC | https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc — Apache-2.0; revision in `granite_model_manifest.json` |
+| Haas-ja-v1.0 | Third Intelligence: https://huggingface.co/third-intelligence/Haas-ja-v1.0 — Apache-2.0 |
+| Haas community ONNX conversion | oboroge0: https://huggingface.co/oboroge0/Haas-ja-v1.0-onnx-quantized — Apache-2.0; pinned revision and hashes in `haas_model_manifest.json`; original LICENSE and NOTICE retained in `licenses/Haas-LICENSE` and `licenses/Haas-NOTICE`. Unofficial quantized CPU conversion, not endorsed by Third Intelligence. |
 | sherpa-onnx | https://github.com/k2-fsa/sherpa-onnx — Apache-2.0 |
 | Pyannote segmentation 3.0 ONNX | sherpa-onnx `speaker-segmentation-models` release; supplied model license retained in `licenses/segmentation-LICENSE` |
 | 3D-Speaker ERes2Net embedding | sherpa-onnx `speaker-recongition-models` release; https://github.com/modelscope/3D-Speaker — Apache-2.0 |

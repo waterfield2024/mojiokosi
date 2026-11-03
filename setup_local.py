@@ -121,6 +121,9 @@ def prepare_assets(model):
         if model == 'granite':
             from granite_model import ensure_granite
             ensure_granite(ROOT / 'models', print)
+        elif model == 'haas':
+            from haas_model import ensure_haas
+            ensure_haas(ROOT / 'models', print)
         else:
             from whisper_hf_model import ensure_whisper_hf
             ensure_whisper_hf(model, ROOT / 'models', print)
@@ -129,7 +132,7 @@ def prepare_assets(model):
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Whisper Local: Windows Python setup')
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
-    parser.add_argument('--model', choices=['base', 'small', 'turbo', 'granite', 'none'], default='base')
+    parser.add_argument('--model', choices=['base', 'small', 'turbo', 'granite', 'haas', 'none'], default='base')
     parser.add_argument('--assets-only', action='store_true', help='Prepare downloads using an already installed environment')
     args = parser.parse_args(argv)
     if os.name != 'nt' or struct.calcsize('P') != 8 or sys.version_info[:2] != (3, 12):

@@ -1,0 +1,16 @@
+Haas-ja-v1.0-onnx-quantized
+
+This is a modified version of Haas-ja-v1.0 by Third Intelligence
+(https://huggingface.co/third-intelligence/Haas-ja-v1.0),
+revision 660728d39019e5e065046154beca44ac9a66a540, licensed under the Apache License 2.0.
+
+Changes from the original:
+- Converted the weights from NeMo format to ONNX for use with sherpa-onnx.
+- Quantized the encoder (pointwise convolutions to int8, MatMul weights to 4-bit).
+- Flattened the prediction network's state into two tensors, and added the ONNX
+  metadata sherpa-onnx expects.
+
+conversion/fla_cpu_shim.py reimplements decode-time kernels of flash-linear-attention
+(https://github.com/fla-org/flash-linear-attention, MIT License) in pure PyTorch.
+
+This conversion is unofficial and is not endorsed by Third Intelligence.

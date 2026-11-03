@@ -200,7 +200,10 @@ def prepare_whisper_model(name, models, progress=lambda s: None):
 
 
 def transcribe(wav, name, language, prompt, job, models, compute="auto", progress=lambda s: None):
-    from recognition_models import GRANITE_MODEL
+    from recognition_models import GRANITE_MODEL, HAAS_MODEL
+    if name == HAAS_MODEL:
+        from haas_asr import transcribe_file
+        return transcribe_file(wav,language,prompt,job,models,compute,progress)
     if name == GRANITE_MODEL:
         from granite_asr import transcribe_file
         return transcribe_file(wav,language,prompt,job,models,compute,progress)

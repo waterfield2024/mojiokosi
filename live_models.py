@@ -6,7 +6,7 @@ import sys
 import threading
 import traceback
 from asr import ROOT
-from realtime_asr import LiveRecognizer, LiveStopped
+from realtime_asr import LiveStopped
 from live_speakers import LiveSpeakerProcess
 from user_data import data_path
 
@@ -30,11 +30,8 @@ class LiveModels:
             if self.recognizer:
                 self.recognizer.close()
                 self.recognizer = None
-            from recognition_models import GRANITE_MODEL
-            recognizer_type = LiveRecognizer
-            if key[0] == GRANITE_MODEL:
-                from granite_asr import GraniteRecognizer
-                recognizer_type = GraniteRecognizer
+            from recognition_models import live_recognizer_type
+            recognizer_type = live_recognizer_type(key[0])
             candidate = recognizer_type(key[0], language, prompt, key[1], self.folder, status, stopped)
             try:
                 status('認識モデルの初回処理を準備しています…')

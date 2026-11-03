@@ -10,9 +10,9 @@ import sys
 import time
 import uuid
 from realtime_audio import LoopbackCapture, RATE
-from realtime_asr import LiveRecognizer, LiveStopped
+from realtime_asr import LiveStopped
 from live_speakers import LiveSpeakerProcess, apply_live_edits, speaker_ranges
-from recognition_models import ALLOWED_MODELS,GRANITE_MODEL
+from recognition_models import ALLOWED_MODELS, GRANITE_MODEL, HAAS_MODEL, recognition_language, live_recognizer_type
 from user_data import data_path
 
 def next_live_chunk(chunks, pending, max_samples):
@@ -128,7 +128,7 @@ def run_live(request, job, models=None):
     audio_dir.mkdir(exist_ok=True)
     wav = audio_dir / "recording.wav"
     data = {"title": title, "mode": "realtime", "source": str(wav), "audio_file": str(wav),
-            "model": model, "language": "auto" if model == GRANITE_MODEL else request.get("language", "ja"), "prompt": prompt,
+            "model": model, "language": recognition_language(model, request.get("language", "ja")), "prompt": prompt,
             "segments": [], "speakers": {}, "live_incomplete": True, "recording_complete": False,
             "recording_device": request["device"]["name"]}
     # A checkpoint exists even if capture or the engine later fails.
@@ -188,10 +188,7 @@ def run_live(request, job, models=None):
         if models:
             recognizer = models.recognizer_for(request, data["language"], prompt, status, stopped)
         else:
-            recognizer_type = LiveRecognizer
-            if model == GRANITE_MODEL:
-                from granite_asr import GraniteRecognizer
-                recognizer_type = GraniteRecognizer
+            recognizer_type = live_recognizer_type(model)
             recognizer = recognizer_type(model, data["language"], prompt, request.get("compute", "auto"), job,
                                         status, stopped)
         if live_speakers:
@@ -313,6 +310,8 @@ def run_live(request, job, models=None):
                 data["backend"] = getattr(recognizer,"backend","whisper.cpp/server/" + recognizer.device.lower())
                 if model == GRANITE_MODEL:
                     data["timestamp_method"] = "ctc-emissions"
+                elif model == HAAS_MODEL:
+                    data["timestamp_method"] = "tdt-tokens-or-chunk"
                 data["backend_fallbacks"] = recognizer.failures
                 data["duration"] = capture.total / RATE
                 write_json(folder / "result.json", data)

@@ -737,6 +737,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             "録音は .audio/recording.wav に保存されます。\n\n"
             "1. YouTubeの動画URL、またはPCの音声・動画ファイルを指定します。\n"
             "2. 「話者判別・文字起こしを開始」で、話者判別から順に自動で実行します。\n"
+            "   「Haas-ja-v1.0（CPU）」も選べます。日本語専用・非公式ONNX変換版で、初回に約481MBを取得します。\n"
             "   「2モデルで比較…」ではWhisperとGraniteの文章と処理時間を並べて確認できます。\n"
             "   違いごとに「Whisperを採用」「Graniteを採用」を選び、「選んだ文章をまとめる」で統合できます。\n"
             "   「この部分を再生」で元の音声を聞きながら採用できます。再生中は「音声を停止」で止められます。\n"

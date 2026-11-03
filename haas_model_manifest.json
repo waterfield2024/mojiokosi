@@ -1,0 +1,36 @@
+{
+  "repo": "oboroge0/Haas-ja-v1.0-onnx-quantized",
+  "revision": "7f5ab0a4b1bf39db78afd6691eeecbc4f9d42e39",
+  "original_model": "third-intelligence/Haas-ja-v1.0",
+  "variant": "unofficial ONNX quantized (CPU)",
+  "files": {
+    "LICENSE": {
+      "size": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "NOTICE": {
+      "size": 783,
+      "sha256": "279784164ddd8a16f0b42aff954d34bc10485c0064a96c7a852419d95eca5cad"
+    },
+    "decoder.onnx": {
+      "size": 15661602,
+      "sha256": "2947cb5512699cbba753fe45fe221428aadaa9856597debbb7aabe19cc253622"
+    },
+    "encoder.data": {
+      "size": 410744064,
+      "sha256": "30befbf6aeb75383e6551f5e58de53efdb76972ddc7d0f76070c517899873586"
+    },
+    "encoder.quantized.onnx": {
+      "size": 42261252,
+      "sha256": "aba291d61d3d594bc6fb8c7f90acbd980e7bc7bf6b7caaf3965ddc25e6f42fac"
+    },
+    "joiner.onnx": {
+      "size": 12158641,
+      "sha256": "8a68320e750890ff9e944a794b41ae1c42c6f439ac4c273503458a6b42adc12d"
+    },
+    "tokens.txt": {
+      "size": 28704,
+      "sha256": "ec78b13c5d9f156cf0d5fdbd6b5aec5785680f319c92630c11d5d11b14b83a84"
+    }
+  }
+}
