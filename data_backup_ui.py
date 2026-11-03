@@ -208,6 +208,8 @@ def open_backup(app):
         messagebox.showinfo('バックアップ・復元', '修正した話者を覚えています。完了後に開いてください。', parent=app.root)
         return
     app.window_settings.flush_all()
+    if app.history_window:
+        app.history_window.close_audio()
     app.data_transfer_active = True
     app.window_settings.restoring = True
     try: app.backup_dialog = BackupDialog(app)

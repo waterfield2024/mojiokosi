@@ -1,7 +1,8 @@
 """Searchable chat-style transcript panel, independent of the minimized editor."""
+import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
-from transcript_history import LIMITS, match_spans, select_page
+from transcript_history import LIMITS, match_spans, row_key, select_page
 from ui_theme import palette, style_text
 
 
@@ -12,7 +13,7 @@ class HistoryWindow(tk.Toplevel):
         self.app = app
         self.title('文字起こし履歴・検索')
         self.geometry('400x660')
-        self.minsize(340, 380)
+        self.minsize(340, 430)
         # Do not make this transient: it must survive main-window minimization.
         self.attributes('-topmost', True)
         self.source = None
@@ -22,6 +23,14 @@ class HistoryWindow(tk.Toplevel):
         self.signature = None
         self.timer = None
         self.rendering = False
+        self.audio_player = None
+        self.audio_generation = None
+        self.audio_key = None
+        self.audio_interval = None
+        self.audio_requested_interval = None
+        self.audio_tags = {}
+        self.press = None
+        self.audio_status = tk.StringVar(value='発言をクリックすると音声を再生します')
         self.query = tk.StringVar()
         self.limit = tk.StringVar(value=str(app.history_limit))
         self.side = tk.StringVar(value='右端' if app.history_side == 'right' else '左端')
@@ -62,10 +71,15 @@ class HistoryWindow(tk.Toplevel):
         self.view.pack(fill='both', expand=True)
         for sequence in ('<MouseWheel>', '<Button-4>', '<Button-5>', '<Button-1>', '<KeyPress-Up>', '<KeyPress-Prior>', '<KeyPress-Home>'):
             self.view.bind(sequence, self.pause, add='+')
+        self.view.bind('<ButtonPress-1>', self.press_entry, add='+')
+        self.view.bind('<B1-Motion>', self.drag_entry, add='+')
+        self.view.bind('<ButtonRelease-1>', self.release_entry, add='+')
+        self.view.bind('<Motion>', self.hover_entry, add='+')
         self.view.bind('<Control-a>', self.select_all)
         self.view.bind('<Control-c>', self.copy_selection)
         self.view.bind('<Configure>', lambda e: self.view.see('end') if self.follow else None, add='+')
         self.bind('<Control-f>', self.focus_search)
+        self.bind('<Escape>', lambda e: self.stop_audio('再生を停止しました。'))
         self.view._whisper_refresh_tags = self.apply_colors
         self.apply_colors()
         ttk.Label(outer, textvariable=self.summary, style='Sub.TLabel', wraplength=310).grid(row=5, column=0, sticky='ew', pady=7)
@@ -76,6 +90,12 @@ class HistoryWindow(tk.Toplevel):
         self.newer = ttk.Button(buttons, text='新しい発言 →', command=lambda: self.turn_page(False))
         self.newer.pack(side='left', padx=4)
         ttk.Button(buttons, text='最新へ', style='Accent.TButton', command=self.latest).pack(side='right')
+        audio_bar = ttk.Frame(outer)
+        audio_bar.grid(row=7, column=0, sticky='ew', pady=(8, 0))
+        audio_bar.columnconfigure(0, weight=1)
+        ttk.Label(audio_bar, textvariable=self.audio_status, style='Sub.TLabel', wraplength=210).grid(row=0, column=0, sticky='w')
+        self.audio_stop = ttk.Button(audio_bar, text='音声を停止', command=lambda: self.stop_audio('再生を停止しました。'), state='disabled')
+        self.audio_stop.grid(row=0, column=1, sticky='e', padx=(6, 0))
         self.query.trace_add('write', lambda *args: self.search_changed())
         self.protocol('WM_DELETE_WINDOW', app.hide_history)
         self.bind('<Destroy>', self.destroyed, add='+')
@@ -91,7 +111,118 @@ class HistoryWindow(tk.Toplevel):
         self.view.tag_configure('name', foreground=colors['accent'], font=('Yu Gothic UI', 10, 'bold'))
         self.view.tag_configure('time', foreground=colors['muted'], font=('Yu Gothic UI', 9))
         self.view.tag_configure('match', background=colors['diff_whisper'], foreground=colors['diff_whisper_ink'])
+        self.view.tag_configure('playing', background=colors['tint'])
+        self.view.tag_raise('match')
         self.view.tag_raise('sel')
+
+    def entry_at(self, event):
+        index = self.view.index(f'@{event.x},{event.y}')
+        bounds = self.view.bbox(index)
+        if not bounds or not bounds[1] <= event.y < bounds[1] + bounds[3]:
+            return None
+        return next((self.audio_tags[tag] for tag in self.view.tag_names(index) if tag in self.audio_tags), None)
+
+    def hover_entry(self, event):
+        self.view.configure(cursor='hand2' if self.entry_at(event) else 'arrow')
+
+    def press_entry(self, event):
+        self.press = (self.entry_at(event), event.x, event.y, False)
+
+    def drag_entry(self, event):
+        if self.press:
+            key, x, y, moved = self.press
+            self.press = (key, x, y, moved or abs(event.x-x) > 4 or abs(event.y-y) > 4)
+
+    def release_entry(self, event):
+        pressed, self.press = self.press, None
+        if (pressed and pressed[0] and not pressed[3] and pressed[0] == self.entry_at(event)
+                and not self.view.tag_ranges('sel')):
+            self.play_entry(pressed[0])
+
+    def current_row(self, key):
+        return next((row for index, row in enumerate(self.app.segments) if row_key(row, index) == key), None)
+
+    def mark_playing(self):
+        self.view.tag_remove('playing', '1.0', 'end')
+        if self.audio_key is not None:
+            for tag, key in self.audio_tags.items():
+                if key == self.audio_key:
+                    bounds = self.view.tag_ranges(tag)
+                    if bounds:
+                        self.view.tag_add('playing', *bounds)
+
+    def play_entry(self, key):
+        self.pause()
+        self.stop_audio()
+        try:
+            if getattr(self.app, 'data_transfer_active', False):
+                raise RuntimeError('バックアップ・復元が終わってから再生してください。')
+            row = self.current_row(key)
+            if row is None or self.app.result_path is None:
+                raise ValueError('発言が更新されました。表示中の発言をもう一度クリックしてください。')
+            from history_audio import playback_target, utterance_interval
+            source, interval = playback_target(self.app.result_data or {}, self.app.result_path.parent, row)
+            if self.audio_player is None:
+                from comparison_audio import ComparisonAudioPlayer
+                self.audio_player = ComparisonAudioPlayer()
+            comparison = getattr(self.app, 'comparison_window', None)
+            if comparison:
+                comparison.stop_comparison_audio()
+            self.audio_generation = self.audio_player.play(source, [interval])
+            self.audio_key, self.audio_interval = key, interval
+            self.audio_requested_interval = utterance_interval(row)
+            self.audio_status.set('発言の音声を準備中…')
+            self.audio_stop.configure(state='normal')
+            self.mark_playing()
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.stop_audio('再生できません：' + str(exc))
+
+    def stop_audio(self, message='発言をクリックすると音声を再生します'):
+        if self.audio_player:
+            self.audio_player.stop()
+        self.audio_generation = self.audio_key = self.audio_interval = self.audio_requested_interval = None
+        self.audio_status.set(message)
+        self.audio_stop.configure(state='disabled')
+        self.mark_playing()
+
+    def poll_audio(self):
+        if not self.audio_player:
+            return
+        if self.audio_generation is not None:
+            from history_audio import utterance_interval
+            row = self.current_row(self.audio_key)
+            try:
+                unchanged = row is not None and utterance_interval(row) == self.audio_requested_interval
+            except ValueError:
+                unchanged = False
+            if not unchanged:
+                self.stop_audio('発言の時刻が変更されました。もう一度クリックして再生できます。')
+        while True:
+            try:
+                generation, state, value = self.audio_player.events.get_nowait()
+            except queue.Empty:
+                break
+            if generation != self.audio_generation:
+                continue
+            if state == 'playing':
+                from engine import timestamp
+                text = f'再生中 {timestamp(value)[:8]} / {timestamp(self.audio_interval[1])[:8]}'
+                if getattr(self.app, 'live_recording', False):
+                    text += '\n録音中：再生音も取り込まれる場合があります'
+                self.audio_status.set(text)
+            elif state == 'ended':
+                self.stop_audio('再生が終わりました。クリックで聞き直せます。')
+            elif state == 'error':
+                self.stop_audio('再生できません：' + str(value))
+
+    def close_audio(self):
+        try:
+            self.stop_audio()
+        except tk.TclError:
+            pass  # Child widgets have already gone during <Destroy>.
+        if self.audio_player:
+            self.audio_player.close()
+            self.audio_player = None
 
     def dock(self):
         from overlay_preferences import display_areas
@@ -106,7 +237,7 @@ class HistoryWindow(tk.Toplevel):
         left, top, right, bottom = area['rect']
         # Keep a margin for the title bar and the Windows taskbar.
         width = min(max(340, self.winfo_width()), right-left-16)
-        height = min(max(380, self.winfo_height()), bottom-top-64)
+        height = min(max(430, self.winfo_height()), bottom-top-64)
         self.geometry(f'{width}x{height}')
         self.update_idletasks()
         rect = w.RECT()
@@ -143,6 +274,7 @@ class HistoryWindow(tk.Toplevel):
         return 'break'
 
     def search_changed(self):
+        self.stop_audio()
         if self.timer is not None:
             self.after_cancel(self.timer)
         self.timer = self.after(160, self.apply_search)
@@ -168,6 +300,7 @@ class HistoryWindow(tk.Toplevel):
     def turn_page(self, older):
         if not self.page or (older and not self.page.older) or (not older and not self.page.newer):
             return
+        self.stop_audio()
         self.follow = False
         self.end_key = self.page.adjacent_anchor(self.app.history_limit, older)
         self.refresh(reset=True)
@@ -203,11 +336,14 @@ class HistoryWindow(tk.Toplevel):
     def refresh(self, reset=False):
         source = str(self.app.result_path.parent) if self.app.result_path else None
         if source != self.source:
+            self.stop_audio()
             self.source, self.end_key, self.follow = source, None, not self.query.get().strip()
             reset = True
         page = select_page(self.app.segments, self.app.speakers, self.query.get(), self.app.history_limit,
                            None if self.follow else self.end_key)
         self.page = page
+        if self.audio_key is not None and not any(item.key == self.audio_key for item in page.entries):
+            self.stop_audio()
         if not self.follow and page.entries:
             self.end_key = page.entries[-1].key
         self.update_summary()
@@ -220,7 +356,11 @@ class HistoryWindow(tk.Toplevel):
         try:
             self.view.configure(state='normal')
             self.view.delete('1.0', 'end')
-            for item in page.entries:
+            for tag in self.audio_tags:
+                self.view.tag_delete(tag)
+            self.audio_tags = {}
+            for number, item in enumerate(page.entries):
+                row_start = self.view.index('end-1c')
                 start = self.view.index('end-1c')
                 self.view.insert('end', item.name, 'name')
                 self.highlight(start, item.name)
@@ -228,10 +368,14 @@ class HistoryWindow(tk.Toplevel):
                 start = self.view.index('end-1c')
                 self.view.insert('end', item.text + '\n\n')
                 self.highlight(start, item.text)
+                tag = f'utterance_{number}'
+                self.view.tag_add(tag, row_start, 'end-2c')
+                self.audio_tags[tag] = item.key
             if not page.entries:
                 self.view.insert('end', '一致する発言がありません。' if self.query.get().strip() else
                                  '文字起こしを始めると、ここに発言が並びます。\n保存した結果を開いて検索することもできます。', 'time')
             self.view.configure(state='disabled')
+            self.mark_playing()
             if self.follow:
                 self.view.see('end')
             elif reset:
@@ -242,9 +386,11 @@ class HistoryWindow(tk.Toplevel):
             self.rendering = False
 
     def destroyed(self, event):
-        if event.widget is self and self.timer is not None:
-            self.after_cancel(self.timer)
-            self.timer = None
+        if event.widget is self:
+            self.close_audio()
+            if self.timer is not None:
+                self.after_cancel(self.timer)
+                self.timer = None
 
 
 class HistoryControls:
@@ -280,6 +426,7 @@ class HistoryControls:
         self.history_visible.set(False)
         self.persist_live_recording_settings()
         if self.history_window and self.history_window.winfo_exists():
+            self.history_window.stop_audio()
             self.window_settings.hide('history')
 
     def toggle_history(self):
@@ -292,7 +439,8 @@ class HistoryControls:
         self.history_dirty = True
 
     def pump_history(self):
-        if (self.history_dirty and self.history_window and self.history_window.winfo_exists()
-                and self.history_window.state() not in {'withdrawn', 'iconic'}):
-            self.history_window.refresh()
-            self.history_dirty = False
+        if self.history_window and self.history_window.winfo_exists():
+            if self.history_dirty and self.history_window.state() not in {'withdrawn', 'iconic'}:
+                self.history_window.refresh()
+                self.history_dirty = False
+            self.history_window.poll_audio()

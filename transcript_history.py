@@ -7,6 +7,10 @@ from speakers import speaker_name
 LIMITS = (50, 100, 200)
 
 
+def row_key(row, index):
+    return str(row.get('segment_id') or row.get('id') or f'row-{index}')
+
+
 def preferences(data=None):
     if data is None:
         data = {}
@@ -78,7 +82,7 @@ def select_page(segments, names, query='', limit=100, end_key=None):
         minute, second = divmod(seconds, 60)
         hour, minute = divmod(minute, 60)
         stamp = f'{hour:02}:{minute:02}:{second:02}'
-        matches.append(Entry(str(row.get('segment_id') or row.get('id') or f'row-{index}'),
+        matches.append(Entry(row_key(row, index),
                              index, name, stamp, text))
     end = next((i + 1 for i, item in enumerate(matches) if item.key == end_key), len(matches))
     start = max(0, end - limit)

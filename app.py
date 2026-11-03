@@ -312,6 +312,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         clean = []
         for s in data["segments"]:
             clean.append({**s, "start": max(0, float(s["start"])), "end": float(s["end"]), "text": str(s["text"])})
+        if self.history_window:self.history_window.stop_audio()
         self.persist_edits()
         self.selected = None
         self.segments = clean
@@ -374,6 +375,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
 
     def launch_worker(self, request):
         if self.comparison_window:self.comparison_window.stop_comparison_audio()
+        if self.history_window:self.history_window.stop_audio()
         request = dict(request)
         request.setdefault("compute", COMPUTE_OPTIONS[self.compute.get()])
         request.setdefault("speaker_memory_file", str(self.speaker_memory.path))
@@ -740,6 +742,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             "停止後もモデルを保持して再開に使い、Whisperアプリを終了すると解放します。\n"
             "画面端の履歴には直近100件を表示します。検索欄で今の文字起こし全文から単語を探せます。\n"
             "「履歴・検索」から開けます。スクロール中は追従を止め、「最新へ」で最新の発言に戻ります。\n"
+            "履歴の発言をクリックすると、その区間の音声を再生します。「音声を停止」で止められます。\n"
             "字幕の位置をプレビューで調整し、音声出力を選んで開始してください。\n"
             "リアルタイム中も話者を自動判別し、字幕に名前を表示します。\n"
             "覚えた声の名前は、YouTube・動画の文字起こしとリアルタイム字幕で自動表示します。\n"

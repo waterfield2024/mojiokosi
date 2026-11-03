@@ -118,6 +118,8 @@ class ComparisonAudioControls(ComparisonRangeControls):
             source=comparison_audio_source(self.path,self.results,self.data or {})
             spans=intervals if intervals is not None else self._audio_cycle_intervals or self.comparison_audio_intervals()
             if not spans:raise ValueError("選択中の違いに対応する音声の時刻がありません。")
+            history=getattr(self.app,'history_window',None)
+            if history:history.stop_audio()
             if self.comparison_player is None:self.comparison_player=ComparisonAudioPlayer()
             self._audio_intervals=spans
             self._audio_range_text=" / ".join(f"{timestamp(a)}〜{timestamp(b)}" for a,b in spans[:2])
