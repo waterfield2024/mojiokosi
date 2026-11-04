@@ -119,8 +119,6 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.compute_combo.pack(side="right")
         self.compute_combo.bind("<<ComboboxSelected>>", lambda event: self.save_compute_choice())
         ttk.Label(heading, text="処理方式", style="App.Sub.TLabel").pack(side="right", padx=(14, 8))
-        self.build_live_button(heading)
-        self.live_button.configure(style="Soft.TButton")
 
         source_box = ttk.Frame(outer, style="Card.TFrame", padding=(16, 12))
         source_box.grid(row=1, column=0, sticky="ew")
@@ -163,6 +161,9 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.cancel_button.pack(side="left", fill="y", padx=(8, 0))
         self.compare_button = ttk.Button(transcription_controls,text="2モデルで比較…",command=self.open_comparison)
         self.compare_button.pack(side="left",fill="y",padx=(8,0))
+        self.build_live_button(transcription_controls)
+        self.live_button.configure(style="Soft.TButton")
+        self.live_button.pack_configure(side="left", fill="y", padx=(8, 0))
         prompt_row = ttk.Frame(source_box)
         prompt_row.pack(fill="x", pady=(8, 0))
         ttk.Label(prompt_row, text="話題・専門用語（任意）", style="Sub.TLabel").pack(anchor="w", pady=(0, 3))
