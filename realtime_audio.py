@@ -7,7 +7,7 @@ import time
 import wave
 import numpy as np
 from speech_preferences import profile, read_control
-from utterance_audio import UtteranceChunker, mode as segmentation_mode
+from utterance_audio import UtteranceChunker, mode as segmentation_mode, pause_duration, read_pause_control
 
 RATE = 16000
 
@@ -74,6 +74,8 @@ class LoopbackCapture:
         self.profile = profile()
         self.speech_control = None
         self.segmentation = 'utterance'
+        self.pause_seconds = pause_duration()
+        self.pause_control = None
         self.total = 0
         self.error = None
         self.epoch = None
@@ -94,16 +96,22 @@ class LoopbackCapture:
         if control_path is not None:
             self.speech_control = control_path
 
-    def set_segmentation(self, value):
+    def set_segmentation(self, value, *, pause_seconds=.7, control_path=None):
         self.segmentation = segmentation_mode(value)
+        self.pause_seconds = pause_duration(pause_seconds)
+        self.pause_control = control_path
 
     def update_chunker(self, chunker):
         # Apply live changes even while the ASR thread is busy with inference.
         if self.speech_control is not None:
             self.set_sensitivity(read_control(self.speech_control, self.profile.key))
         chunker.profile = self.profile
-        if isinstance(chunker, UtteranceChunker) and chunker.activity:
-            chunker.activity.configure(self.profile.key)
+        if isinstance(chunker, UtteranceChunker):
+            if self.pause_control is not None:
+                self.pause_seconds = read_pause_control(self.pause_control, self.pause_seconds)
+            chunker.pause_seconds = self.pause_seconds
+            if chunker.activity:
+                chunker.activity.configure(self.profile.key)
 
     def run(self):
         import pyaudiowpatch as pa
@@ -141,7 +149,7 @@ class LoopbackCapture:
             def submit(a, b, core):
                 writer._file.flush()
                 self.chunks.put((a, b, core))
-            chunker = (UtteranceChunker(self.chunks.put, self.seconds, self.profile.key, activity)
+            chunker = (UtteranceChunker(self.chunks.put, self.seconds, self.profile.key, activity, pause_seconds=self.pause_seconds)
                        if self.segmentation == 'utterance' else Chunker(submit, self.seconds, self.profile.key))
             epoch = time.monotonic()
             self.epoch = epoch

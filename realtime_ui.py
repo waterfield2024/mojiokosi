@@ -14,7 +14,7 @@ from subtitle_overlay import SubtitleOverlay
 from recognition_models import LIVE_MODELS,model_hint
 from speech_preferences import LABELS as SPEECH_LABELS, HINTS as SPEECH_HINTS
 from live_prompt import WHISPER_MODELS
-from utterance_audio import MODES as SEGMENTATION_MODES
+from utterance_audio import MODES as SEGMENTATION_MODES, PAUSE_CHOICES, pause_duration
 
 class RealtimeControls:
     def init_realtime(self):
@@ -60,6 +60,7 @@ class RealtimeControls:
         processing = processing_preferences(settings["processing"], context_default=self.context_auto_apply.get())
         self.live_chunk = tk.StringVar(value=str(processing["chunk_seconds"]))
         self.live_segmentation = tk.StringVar(value=next(k for k,v in SEGMENTATION_MODES.items() if v == processing['segmentation']))
+        self.live_pause = tk.StringVar(value=f"{processing['pause_seconds']:.1f}")
         self.live_interval_label = tk.StringVar()
         self.live_boundary_hint = tk.StringVar()
         self.live_final_utterance = -1
@@ -193,6 +194,7 @@ class RealtimeControls:
         for variable in (self.live_context, self.live_chunk, self.live_previous_text):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=False))
         self.live_segmentation.trace_add('write', self.change_live_segmentation)
+        self.live_pause.trace_add('write', self.change_live_pause)
 
     def update_live_controls(self):
         self.live_button.configure(state="normal" if not self.proc or self.operation == "realtime" else "disabled")
@@ -212,6 +214,8 @@ class RealtimeControls:
             self.live_model_combo.configure(state="disabled" if busy else "readonly")
             self.live_chunk_combo.configure(state="disabled" if busy else "readonly")
             self.live_segmentation_combo.configure(state='disabled' if busy else 'readonly')
+            self.live_pause_combo.configure(state='readonly' if SEGMENTATION_MODES[self.live_segmentation.get()] == 'utterance'
+                                            and (not busy or self.operation == 'realtime') else 'disabled')
             self.live_previous_check.configure(state='normal' if not busy and LIVE_MODELS[self.live_model.get()] in WHISPER_MODELS else 'disabled')
             self.update_screen_controls()
             for control in self.live_post_controls:
@@ -298,6 +302,11 @@ class RealtimeControls:
         self.live_segmentation_combo = ttk.Combobox(row,textvariable=self.live_segmentation,
             values=list(SEGMENTATION_MODES),state='readonly',width=25)
         self.live_segmentation_combo.pack(side='left')
+        ttk.Label(row,text='区切るまでの無音').pack(side='left',padx=(14,6))
+        self.live_pause_combo = ttk.Combobox(row,textvariable=self.live_pause,
+            values=[f'{n:.1f}' for n in PAUSE_CHOICES],state='readonly',width=5)
+        self.live_pause_combo.pack(side='left')
+        ttk.Label(row,text='秒').pack(side='left',padx=5)
         ttk.Label(frame,textvariable=self.live_boundary_hint,style='Sub.TLabel',wraplength=680).pack(anchor='w',pady=(0,8))
         self.live_previous_check = ttk.Checkbutton(frame, text='前の文章を参考に認識する（Whisper）', variable=self.live_previous_text)
         self.live_previous_check.pack(anchor='w')
@@ -537,17 +546,34 @@ class RealtimeControls:
                                        'live_noise': self.live_noise.get(),
                                        'live_previous_text': self.live_previous_text.get(),
                                        'segmentation': SEGMENTATION_MODES[self.live_segmentation.get()],
+                                       'pause_seconds': float(self.live_pause.get()),
                                        'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()]})
 
     def update_live_boundary_hint(self):
         utterance = SEGMENTATION_MODES[self.live_segmentation.get()] == 'utterance'
         self.live_interval_label.set('字幕の更新間隔' if utterance else '音声を区切る間隔')
-        self.live_boundary_hint.set('話の途中は暫定字幕を表示し、切れ目で確定します。長い発言は最大12秒で区切ります。'
+        self.live_boundary_hint.set(f'声が約{self.live_pause.get()}秒途切れたら確定。長めにすると息継ぎで区切られにくくなります。\n'
+                                    '途中は暫定字幕を表示／長い発言は最大12秒／無音の長さは録音中も変更可'
                                     if utterance else '設定した秒数、または短い無音で区切って認識します。')
 
     def change_live_segmentation(self, *args):
         self.update_live_boundary_hint()
         self.change_live_processing(preload=False)
+        self.update_live_controls()
+
+    def change_live_pause(self, *args):
+        try:
+            value = pause_duration(float(self.live_pause.get()))
+        except ValueError:
+            return
+        self.persist_live_recording_settings()
+        self.update_live_boundary_hint()
+        if self.proc and self.operation == 'realtime':
+            from context_ai import write_json
+            try:
+                write_json(self.job / 'pause-control.json', {'pause_seconds': value})
+            except OSError as exc:
+                self.live_boundary_hint.set('無音の長さの変更を送信できませんでした：' + str(exc))
 
     def change_live_sensitivity(self, *args):
         value = SPEECH_LABELS.get(self.live_sensitivity.get())
@@ -727,6 +753,7 @@ class RealtimeControls:
                    "live_noise": self.live_noise.get(),
                    'live_previous_text': self.live_previous_text.get(),
                    'segmentation': SEGMENTATION_MODES[self.live_segmentation.get()],
+                   'pause_seconds': float(self.live_pause.get()),
                    'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()],
                    "correction_rules": self.automatic_correction_rules(),
                    "speaker_memory_file": str(self.speaker_memory.path)}

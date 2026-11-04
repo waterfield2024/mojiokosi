@@ -1,10 +1,13 @@
 """Growing live utterances: replaceable previews, durable final boundaries."""
 from dataclasses import dataclass
 import audioop
+import json
+from pathlib import Path
 from speech_preferences import profile
 
 RATE = 16000
 PAUSE_SECONDS = .7
+PAUSE_CHOICES = (.3, .5, .7, 1., 1.2, 1.5, 2., 3.)
 MAX_SECONDS = 12
 MODES = {'話の切れ目で区切る': 'utterance', '秒数で区切る（従来）': 'timed'}
 
@@ -13,6 +16,19 @@ def mode(value='utterance'):
     if not isinstance(value, str) or value not in MODES.values():
         raise ValueError('音声の区切り方を一覧から選んでください。')
     return value
+
+
+def pause_duration(value=PAUSE_SECONDS):
+    if type(value) not in (int, float) or value not in PAUSE_CHOICES:
+        raise ValueError('区切るまでの無音は一覧の0.3〜3.0秒から選んでください。')
+    return float(value)
+
+
+def read_pause_control(path, current):
+    try:
+        return pause_duration(json.loads(Path(path).read_text('utf-8'))['pause_seconds'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return current
 
 
 @dataclass(frozen=True)
@@ -28,7 +44,7 @@ class AudioChunk:
 
 
 class UtteranceChunker:
-    def __init__(self, submit, seconds=2, sensitivity='balanced', activity=None):
+    def __init__(self, submit, seconds=2, sensitivity='balanced', activity=None, *, pause_seconds=PAUSE_SECONDS):
         self.submit = submit
         self.update_samples = int(seconds * RATE)
         self.profile = profile(sensitivity)
@@ -38,6 +54,7 @@ class UtteranceChunker:
         self.next_preview = 0
         self.activity = activity
         self.heard_speech = False
+        self.pause_seconds = pause_duration(pause_seconds)
 
     def feed(self, pcm):
         # Bound checks and voice durations are independent of input block size.
@@ -64,7 +81,7 @@ class UtteranceChunker:
             self.last_voice = self.total
         if self.start is None:
             return
-        pause = self.total - self.last_voice >= int(PAUSE_SECONDS*RATE)
+        pause = self.total - self.last_voice >= round(self.pause_seconds*RATE)
         full = self.total - self.start >= MAX_SECONDS*RATE
         if pause or full:
             if self.voiced >= int(self.profile.capture_seconds*RATE):
