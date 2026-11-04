@@ -40,6 +40,11 @@ def main():
     parser.add_argument('--check', action='store_true', help='Check installed dependencies without recording audio')
     parser.add_argument('--smoke-test', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    # --check also runs inside the updater while it owns the installation lock.
+    if not args.check:
+        from app_update import installation_lock, recover_pending
+        with installation_lock(ROOT):
+            recover_pending(ROOT)
     from portable_runtime import repair_environment
     repair_environment(ROOT)
     python = ROOT / '.venv/Scripts/python.exe'

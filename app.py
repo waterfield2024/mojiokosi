@@ -14,6 +14,21 @@ import uuid
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+# Hold the installation lock before importing modules that an update can replace.
+# A power loss during replacement is recovered before settings or models are read.
+_installation_session = None
+if __name__ == '__main__':
+    import atexit
+    from app_update import installation_lock, recover_pending
+    try:
+        _installation_session = installation_lock(Path(__file__).resolve().parent)
+        _installation_session.__enter__()
+        atexit.register(_installation_session.__exit__, None, None, None)
+        recover_pending(Path(__file__).resolve().parent)
+    except (OSError, ValueError) as exc:
+        messagebox.showerror('Whisperを起動できません', str(exc))
+        raise SystemExit(1)
+
 from engine import ROOT, RESULTS, NO_WINDOW, subtitle_text, timestamp, transcript_text, transcript_file_text, youtube_url
 
 from speaker_ui import SpeakerControls
@@ -223,6 +238,11 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.video_button.pack(side="left", padx=(8, 0))
         self.play_button = ttk.Button(actions, text="出力したMP4を再生", command=self.play_video, state="disabled")
         self.play_button.pack(side="right")
+        footer = ttk.Frame(outer, style="App.TFrame")
+        footer.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        from update_ui import open_update
+        self.update_button = ttk.Button(footer, text="アプリを更新…", command=lambda: open_update(self))
+        self.update_button.pack(side="right")
         r.update_idletasks()
         r.geometry(f"{width}x{height}+{max(0, (r.winfo_screenwidth() - width) // 2)}+{max(0, (r.winfo_screenheight() - height) // 3)}")
         self.window_settings.attach(r, "main")
@@ -804,6 +824,12 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             "更新時もUserData・.python・.venv・modelsを残してください。")
 
     def close(self):
+        updater = getattr(self, 'update_dialog', None)
+        if updater:
+            if updater.busy:
+                messagebox.showinfo('アプリの更新', '更新の準備が終わるまでお待ちください。', parent=updater)
+                return
+            updater.close()
         if getattr(self, 'data_transfer_active', False):
             dialog = getattr(self, 'backup_dialog', None)
             if dialog and dialog.busy:
@@ -871,7 +897,16 @@ def main():
         messagebox.showerror("保存データを読み込めません", f"{exc}\n\n元のデータはそのまま残しています。保存先を確認して起動し直してください。", parent=root)
         root.destroy()
         raise SystemExit(1)
-    if app and getattr(app, '_restart_after_restore', False):
+    if _installation_session:
+        _installation_session.__exit__(None, None, None)
+        atexit.unregister(_installation_session.__exit__)
+    if app and getattr(app, '_pending_app_update', None):
+        from app_update import launch_helper
+        try:
+            launch_helper(ROOT, app._pending_app_update)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror('更新を開始できません', f'プログラムと保存データは変更していません。\n{exc}\nstart.cmdで起動して更新を再試行してください。')
+    elif app and getattr(app, '_restart_after_restore', False):
         python = Path(sys.executable).with_name('pythonw.exe')
         try:
             subprocess.Popen([str(python if python.is_file() else Path(sys.executable)), '-X', 'utf8', str(ROOT / 'app.py')],

@@ -31,6 +31,8 @@ if errorlevel 1 (
 )
 
 :ready
+"%WHISPER_SETUP_PYTHON%" -X utf8 app_update.py --recover "%CD%"
+if errorlevel 1 exit /b 1
 "%WHISPER_SETUP_PYTHON%" -X utf8 portable_runtime.py
 if errorlevel 1 exit /b 1
 "%WHISPER_SETUP_PYTHON%" -X utf8 setup_local.py %*
