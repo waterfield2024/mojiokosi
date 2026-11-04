@@ -23,8 +23,7 @@ MAX_METADATA = 32 * 1024 * 1024
 
 
 def device_id():
-    value = os.environ.get('COMPUTERNAME', '') + '|' + str(Path.home())
-    return hashlib.sha256(value.casefold().encode('utf-8')).hexdigest()
+    return ud.storage_device()
 
 
 def _json(path):
@@ -301,7 +300,8 @@ def restore_backup(path, *, expected_fingerprint, root=None, progress=lambda tex
             from restore_undo import snapshot_inventory
             before_restore = snapshot_inventory(root, progress) if root.exists() else {}
             marker = {'version': 1, 'complete': True, 'restore_id': token, 'restore_action': 'restore',
-                      'undo_inventory': before_restore, 'restored_at': datetime.now(timezone.utc).isoformat()}
+                      'undo_inventory': before_restore, 'restored_at': datetime.now(timezone.utc).isoformat(),
+                      **ud.storage_identity(root)}
             (stage / ud.MARKER).write_text(json.dumps(marker), 'utf-8')
             progress('データを復元しています…')
             backup = replace_store(stage, root, token)

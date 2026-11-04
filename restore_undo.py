@@ -82,9 +82,17 @@ def undo_restore(*, expected_id, root=None, progress=lambda text: None):
             if snapshot_inventory(snapshot, progress) != inventory:
                 raise OSError('復元前のデータが途中で変更されました。現在のデータは変更していません。')
             from data_backup import _validate
+            old_marker = json.loads((stage / ud.MARKER).read_text('utf-8')) if (stage / ud.MARKER).is_file() else {}
+            previous = Path(old_marker.get('storage_root', str(root)))
+            if previous != root: ud.relocate_store(stage, previous, root)
+            if old_marker.get('storage_device') not in (None, ud.storage_device()) and (stage / 'recording_settings.json').is_file():
+                recording = json.loads((stage / 'recording_settings.json').read_text('utf-8'))
+                recording.update(targets={}, audio_device=None)
+                ud._write_json(stage / 'recording_settings.json', recording)
             _validate(stage, root, allow_local_sources=True)
             restored = {'version': 1, 'complete': True, 'restore_id': token, 'restore_action': 'undo',
-                        'undo_of': expected_id, 'undone_at': datetime.now(timezone.utc).isoformat()}
+                        'undo_of': expected_id, 'undone_at': datetime.now(timezone.utc).isoformat(),
+                        **ud.storage_identity(root)}
             (stage / ud.MARKER).write_text(json.dumps(restored), 'utf-8')
             progress('復元前の状態に戻しています…')
             current_backup = replace_store(stage, root, token)

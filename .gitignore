@@ -17,6 +17,8 @@ transcripts/
 speaker_memory_clips/
 speaker_sources/
 UserData*/
+UserData.*
+.UserData.*
 backups/
 *.zip
 *.7z

@@ -40,6 +40,8 @@ def main():
     parser.add_argument('--check', action='store_true', help='Check installed dependencies without recording audio')
     parser.add_argument('--smoke-test', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    from portable_runtime import repair_environment
+    repair_environment(ROOT)
     python = ROOT / '.venv/Scripts/python.exe'
     if not python.is_file():
         raise RuntimeError('start.cmd を開くと、初回セットアップから起動まで自動で進みます。')

@@ -1,4 +1,4 @@
-"""Version-independent local user data, with a one-time, recoverable legacy import."""
+"""Portable user data, with recoverable import and relocation of media paths."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -17,14 +17,28 @@ DIRECTORIES = ('speaker_memory_clips', 'speaker_sources', 'transcripts')
 MARKER = '.user-data-v1.json'
 _ready = set()
 _thread_lock = threading.RLock()
+APP_ROOT = Path(__file__).resolve().parent
 
 
 def data_root():
     custom = os.environ.get('WHISPER_USER_DATA_DIR')
     if custom:
         return Path(custom).expanduser().resolve()
+    return (APP_ROOT / 'UserData').resolve()
+
+
+def shared_data_root():
     local = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
     return (local / 'WhisperYouTube' / 'UserData').resolve()
+
+
+def storage_device():
+    value = os.environ.get('COMPUTERNAME', '') + '|' + str(Path.home())
+    return hashlib.sha256(value.casefold().encode('utf-8')).hexdigest()
+
+
+def storage_identity(root):
+    return {'storage_root': str(Path(root).resolve()), 'storage_device': storage_device()}
 
 
 def data_path(name, override=None):
@@ -111,19 +125,64 @@ def _locked(root):
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
-def _relocate(value, legacy, stage, root, key=''):
+def _relocate(value, legacy, stage, root, key='', *, require_exists=True):
     if isinstance(value, dict):
-        return {k: _relocate(v, legacy, stage, root, k) for k, v in value.items()}
+        return {k: _relocate(v, legacy, stage, root, k, require_exists=require_exists) for k, v in value.items()}
     if isinstance(value, list):
-        return [_relocate(v, legacy, stage, root, key) for v in value]
-    if key not in {'source', 'audio_file', 'video_file', 'before_context', 'origin', 'folder', 'result_path'} or not isinstance(value, str):
+        return [_relocate(v, legacy, stage, root, key, require_exists=require_exists) for v in value]
+    if key not in {'source', 'audio_file', 'video_file', 'video_source', 'before_context', 'origin', 'folder', 'result_path'} or not isinstance(value, str):
         return value
     path = Path(value)
     if path.is_absolute() and path.is_relative_to(legacy):
         relative = path.relative_to(legacy)
-        if (stage / relative).exists():
+        if '..' not in relative.parts and (not require_exists or (stage / relative).exists()):
             return str(root / relative)
     return value
+
+
+def _write_json(path, data):
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), 'utf-8')
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def relocate_store(folder, previous, destination):
+    """Change metadata only. Audio and undo snapshots retain their exact bytes."""
+    changes = []
+    for file in _files(folder):
+        relative = file.relative_to(folder)
+        if file.suffix.lower() != '.json' or not (relative.as_posix() == 'speaker_memory.json' or relative.parts[0] == 'transcripts'):
+            continue
+        original = json.loads(file.read_text('utf-8-sig'))
+        updated = _relocate(original, previous, folder, destination, require_exists=False)
+        if updated != original: changes.append((file, updated))
+    # Parse everything before changing files. If interrupted during replacement,
+    # the old marker remains and the same remapping safely resumes next startup.
+    for file, updated in changes: _write_json(file, updated)
+
+
+def _prepare_location(root):
+    marker = json.loads((root / MARKER).read_text('utf-8'))
+    identity = storage_identity(root)
+    if all(marker.get(k) == v for k, v in identity.items()): return
+    previous = marker.get('storage_root')
+    if previous is not None:
+        if not isinstance(previous, str) or not Path(previous).is_absolute():
+            raise ValueError('保存データの以前の場所を確認できません。')
+        if Path(previous) != root: relocate_store(root, Path(previous), root)
+    if marker.get('storage_device') not in (None, identity['storage_device']):
+        recording = root / 'recording_settings.json'
+        if recording.is_file():
+            settings = json.loads(recording.read_text('utf-8-sig'))
+            # HWND/PID and device names belong to the original computer. Keep
+            # model/caption preferences, but do not select somebody else's window.
+            settings.update(targets={}, audio_device=None)
+            _write_json(recording, settings)
+    marker.update(identity)
+    _write_json(root / MARKER, marker)
 
 
 def _retain_pending_audio(data, legacy, stage, root):
@@ -141,9 +200,9 @@ def _retain_pending_audio(data, legacy, stage, root):
                 if cached and any((stage / 'speaker_memory_clips' / sub / cached).is_file() for sub in ('', '.undo')):
                     continue
                 source = Path(clip['source'])
-                if source.is_absolute() and source.is_relative_to(legacy) and source.is_file():
-                    relative = source.relative_to(legacy)
-                    if not (stage / relative).is_file():
+                if source.is_absolute() and source.is_file():
+                    relative = source.relative_to(legacy) if source.is_relative_to(legacy) else None
+                    if relative is None or not (stage / relative).is_file():
                         name = hashlib.sha256(str(source).encode('utf-8')).hexdigest() + source.suffix
                         relative = Path('speaker_sources') / name
                         if not (stage / relative).exists():
@@ -155,7 +214,7 @@ def _retain_pending_audio(data, legacy, stage, root):
 
 
 def initialize(legacy=None):
-    """Copy once before loading settings; a shared store always wins over stale app files."""
+    """Import once; the folder's own data always wins over another PC's data."""
     root = data_root()
     with _thread_lock:
         if root in _ready and not (root.parent / (root.name + '.restore-pending.json')).exists():
@@ -164,10 +223,13 @@ def initialize(legacy=None):
             from data_storage import recover_restore
             recover_restore(root)
             if _read_marker(root):
+                _prepare_location(root)
                 _ready.add(root)
                 return root
-            legacy = Path(legacy or os.environ.get('WHISPER_LEGACY_DATA_DIR') or Path(__file__).parent).resolve()
-            if root == legacy or root.is_relative_to(legacy) or legacy.is_relative_to(root):
+            default_legacy = shared_data_root() if shared_data_root().is_dir() else APP_ROOT
+            legacy = Path(legacy or os.environ.get('WHISPER_LEGACY_DATA_DIR') or default_legacy).resolve()
+            local_legacy = root == (APP_ROOT / 'UserData').resolve() and legacy == APP_ROOT.resolve()
+            if root == legacy or (root.is_relative_to(legacy) and not local_legacy) or legacy.is_relative_to(root):
                 raise ValueError('アプリ本体とは別のフォルダーを保存先に指定してください。')
             stage = root.parent / ('.' + root.name + '.migrate-' + uuid.uuid4().hex)
             backup = None
@@ -196,7 +258,8 @@ def initialize(legacy=None):
                     if relocated != json.loads(path.read_text('utf-8-sig')):
                         path.write_text(json.dumps(relocated, ensure_ascii=False, indent=2), 'utf-8')
                 record = {'version': 1, 'complete': True, 'legacy': str(legacy),
-                          'created': datetime.now(timezone.utc).isoformat(), 'imported_sha256': imported}
+                          'created': datetime.now(timezone.utc).isoformat(), 'imported_sha256': imported,
+                          **storage_identity(root)}
                 (stage / MARKER).write_text(json.dumps(record, ensure_ascii=False, indent=2), 'utf-8')
                 if root.exists():
                     backup = root.with_name(root.name + '.before-migration-' + uuid.uuid4().hex)

@@ -24,7 +24,7 @@ NODE_VERSION = '24.19.0'
 NODE_SHA256 = '3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237'
 SEGMENTATION_SHA256 = '220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079'
 SPEAKER_RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/'
-SETUP_INPUTS = ('setup_local.py', 'run.py', 'requirements.txt', 'requirements-lock.txt',
+SETUP_INPUTS = ('setup_local.py', 'run.py', 'portable_runtime.py', 'requirements.txt', 'requirements-lock.txt',
                 'whisper_hf_manifest.json', 'granite_model_manifest.json', 'haas_model_manifest.json',
                 'reuse_assets.py', 'reuse_model/config.json', 'speech_gate.py', 'speech_preferences.py')
 

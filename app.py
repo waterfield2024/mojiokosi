@@ -799,9 +799,9 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             "音声認識はPC内で実行します。APIキーや従量課金はありません。\n"
             "同音異義語などの誤変換は残ることがあります。内容を確認してください。\n"
             "YouTube側のログイン・アクセス制限により取得できない動画もあります。\n"
-            "設定・話者・学習音声・辞書・結果は、アプリとは別の共通フォルダーに自動保存します。\n"
-            "同じWindowsユーザーで更新版を使うと、自動で引き継ぎます。\n"
-            "保存先：%LOCALAPPDATA%\\WhisperYouTube\\UserData")
+            "設定・話者・学習音声・辞書・結果は、アプリ内のUserDataフォルダーに自動保存します。\n"
+            "別PCへはアプリのフォルダーごとコピーし、start.cmdから起動してください。\n"
+            "更新時もUserData・.python・.venv・modelsを残してください。")
 
     def close(self):
         if getattr(self, 'data_transfer_active', False):

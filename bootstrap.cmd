@@ -11,18 +11,10 @@ echo Windows 10 / 11 の x64 版が必要です。
 exit /b 1
 
 :architecture_ok
-set "WHISPER_SETUP_PYTHON=.venv\Scripts\python.exe"
-call :check_python
-if not errorlevel 1 goto ready
 set "WHISPER_SETUP_PYTHON=.python\runtime\python.exe"
 call :check_python
 if not errorlevel 1 goto ready
 set "WHISPER_SETUP_PYTHON=.python\3.12.10\python.exe"
-call :check_python
-if not errorlevel 1 goto ready
-py -3.12 -I -c "import sys,struct,tkinter,venv;assert sys.version_info[:2]==(3,12) and struct.calcsize('P')==8" >nul 2>&1
-if not errorlevel 1 goto system_python
-set "WHISPER_SETUP_PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
 call :check_python
 if not errorlevel 1 goto ready
 
@@ -39,11 +31,9 @@ if errorlevel 1 (
 )
 
 :ready
+"%WHISPER_SETUP_PYTHON%" -X utf8 portable_runtime.py
+if errorlevel 1 exit /b 1
 "%WHISPER_SETUP_PYTHON%" -X utf8 setup_local.py %*
-exit /b %errorlevel%
-
-:system_python
-py -3.12 -X utf8 setup_local.py %*
 exit /b %errorlevel%
 
 :check_python
