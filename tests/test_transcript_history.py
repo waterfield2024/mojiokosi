@@ -15,7 +15,7 @@ for key in list(os.environ):
 os.environ['WHISPER_USER_DATA_DIR'] = str(Path(DATA.name) / 'user-data')
 os.environ['WHISPER_LEGACY_DATA_DIR'] = str(Path(DATA.name) / 'empty-legacy')
 
-from transcript_history import select_page, match_spans, preferences
+from transcript_history import organized_paragraphs, select_page, match_spans, preferences
 from recording_settings import settings_for, save_settings, load_settings
 
 
@@ -83,6 +83,70 @@ class HistorySearch(unittest.TestCase):
         source = rows(1)
         source[0]['text'] = ' \n '
         self.assertEqual(select_page(source, {}).total, 0)
+
+
+class OrganizedReading(unittest.TestCase):
+    def test_connects_current_text_without_changing_originals_or_timing(self):
+        source = rows(3)
+        for row, text in zip(source, ['今日は', 'いい天気なので、', '散歩に行きます。']):
+            row.update(text=text, live_original_text='認識直後の原文')
+        before = json.dumps(source, ensure_ascii=False)
+        result = organized_paragraphs(source, {'speaker_0': '田中'})
+        self.assertEqual([(p.name, p.text) for p in result], [('田中', '今日はいい天気なので、散歩に行きます。')])
+        self.assertEqual(json.dumps(source, ensure_ascii=False), before)
+
+    def test_speakers_and_long_silences_stay_separate(self):
+        source = rows(5)
+        source[1]['speaker'] = 'speaker_1'
+        source[3].update(start=30, end=31)
+        source[4].update(start=32, end=33, speaker_review=True)
+        # Even equal display names must not join different speaker identities.
+        result = organized_paragraphs(source, {'speaker_0': '田中', 'speaker_1': '田中'})
+        self.assertEqual([p.text for p in result], [r['text'] for r in source])
+        self.assertEqual(result[-1].name, '田中 ？')
+
+    def test_latest_limit_and_empty_rows_do_not_hide_recent_speech(self):
+        source = rows(80)
+        source.append({'text': '  '})
+        # Separate names make the number of included utterances observable.
+        for index, row in enumerate(source):
+            row['speaker'] = str(index)
+        result = organized_paragraphs(source, {}, limit=50)
+        self.assertEqual(len(result), 50)
+        self.assertEqual((result[0].text, result[-1].text), ('発言30', '発言79'))
+        self.assertEqual(organized_paragraphs([], {}), [])
+        with self.assertRaises(ValueError):
+            organized_paragraphs(source, {}, limit=1)
+
+    def test_manual_correction_rename_and_undo_are_reflected(self):
+        source = rows(2)
+        source[0]['text'], source[1]['text'] = '政党な', '理由です。'
+        self.assertEqual(organized_paragraphs(source, {})[0].text, '政党な理由です。')
+        source[0]['text'] = '正当な'
+        result = organized_paragraphs(source, {'speaker_0': '佐藤'})
+        self.assertEqual((result[0].name, result[0].text), ('佐藤', '正当な理由です。'))
+        source[0]['text'] = '政党な'
+        self.assertEqual(organized_paragraphs(source, {})[0].text, '政党な理由です。')
+
+    def test_keeps_english_numbers_and_intentional_repetitions(self):
+        source = rows(6)
+        for row, text in zip(source, ['Version', '1.5', 'is ready.', 'Next time.', 'はい、', 'はい。']):
+            row['text'] = text
+            row['speaker'] = None
+        result = organized_paragraphs(source, {})
+        self.assertEqual(result[0].name, '')
+        self.assertEqual(result[0].text, 'Version 1.5 is ready. Next time.はい、はい。')
+
+    def test_long_paragraphs_and_invalid_times_keep_all_words(self):
+        source = rows(3)
+        for row in source:
+            row['text'] = 'あ' * 300
+        self.assertEqual([len(p.text) for p in organized_paragraphs(source, {})], [300, 300, 300])
+        for value in (None, 'invalid', float('nan')):
+            with self.subTest(value=value):
+                source = rows(2)
+                source[1]['start'] = value
+                self.assertEqual(len(organized_paragraphs(source, {})), 2)
 
 
 class HistoryPreferences(unittest.TestCase):

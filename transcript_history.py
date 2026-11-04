@@ -42,6 +42,47 @@ class Entry:
     text: str
 
 
+@dataclass(frozen=True)
+class Paragraph:
+    name: str
+    text: str
+
+
+def organized_paragraphs(segments, names, limit=100):
+    """Join the latest current texts for reading, without rewriting saved rows."""
+    if limit not in LIMITS:
+        raise ValueError('表示件数は50・100・200件から選んでください。')
+    recent = []
+    for row in reversed(segments):
+        text = str(row.get('text', '')).strip()
+        if text:
+            recent.append((row, text))
+            if len(recent) == limit:
+                break
+    paragraphs, previous = [], None
+    for row, text in reversed(recent):
+        name = speaker_name(row.get('speaker'), names)
+        if row.get('speaker_review'):
+            name = (name or '未設定') + ' ？'
+        same_speaker = previous is not None and (
+            previous.get('speaker') == row.get('speaker') and
+            bool(previous.get('speaker_review')) == bool(row.get('speaker_review')))
+        try:
+            gap = float(row['start']) - float(previous['end']) if previous else math.inf
+        except (KeyError, TypeError, ValueError):
+            gap = math.inf
+        if same_speaker and -1 <= gap <= 6 and len(paragraphs[-1].text) + len(text) <= 500:
+            before = paragraphs[-1].text
+            # Japanese fragments join directly; keep English words/numbers apart.
+            space = (before[-1].isascii() and (before[-1].isalnum() or before[-1] in '.,!?;:)')
+                     and text[0].isascii() and text[0].isalnum())
+            paragraphs[-1] = Paragraph(name, before + (' ' if space else '') + text)
+        else:
+            paragraphs.append(Paragraph(name, text))
+        previous = row
+    return paragraphs
+
+
 @dataclass
 class Page:
     entries: list

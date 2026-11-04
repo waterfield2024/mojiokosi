@@ -3,7 +3,7 @@ import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
 from comparison_audio import PLAYBACK_SPEEDS
-from transcript_history import LIMITS, match_spans, row_key, select_page
+from transcript_history import LIMITS, match_spans, organized_paragraphs, row_key, select_page
 from ui_theme import palette, style_text
 
 SPEED_LABELS = {f'{speed:g}倍': speed for speed in PLAYBACK_SPEEDS}
@@ -15,8 +15,8 @@ class HistoryWindow(tk.Toplevel):
         self.withdraw()
         self.app = app
         self.title('文字起こし履歴・検索')
-        self.geometry('400x660')
-        self.minsize(340, 430)
+        self.geometry('400x800')
+        self.minsize(340, 560)
         # Do not make this transient: it must survive main-window minimization.
         self.attributes('-topmost', True)
         self.source = None
@@ -24,6 +24,9 @@ class HistoryWindow(tk.Toplevel):
         self.follow = True
         self.page = None
         self.signature = None
+        self.organized_signature = None
+        self.organized_text = ''
+        self.organized_follow = True
         self.timer = None
         self.rendering = False
         self.audio_player = None
@@ -65,10 +68,16 @@ class HistoryWindow(tk.Toplevel):
         side.pack(side='right')
         side.bind('<<ComboboxSelected>>', self.change_side)
         ttk.Label(options, text='配置').pack(side='right', padx=5)
-        body = ttk.Frame(outer)
-        body.grid(row=4, column=0, sticky='nsew')
+        self.panes = ttk.Panedwindow(outer, orient='vertical')
+        self.panes.grid(row=4, column=0, sticky='nsew')
+        history = ttk.Frame(self.panes)
+        history.columnconfigure(0, weight=1)
+        history.rowconfigure(0, weight=1)
+        self.panes.add(history, weight=3)
+        body = ttk.Frame(history)
+        body.grid(row=0, column=0, sticky='nsew')
         self.view = tk.Text(body, wrap='word', font=('Yu Gothic UI', 11), state='disabled', cursor='arrow',
-                            spacing1=2, spacing3=5, takefocus=True)
+                            height=5, spacing1=2, spacing3=5, takefocus=True)
         style_text(self.view)
         self.scroll = ttk.Scrollbar(body, command=self.scroll_view)
         self.view.configure(yscrollcommand=self.scroll.set)
@@ -82,21 +91,20 @@ class HistoryWindow(tk.Toplevel):
         self.view.bind('<Motion>', self.hover_entry, add='+')
         self.view.bind('<Control-a>', self.select_all)
         self.view.bind('<Control-c>', self.copy_selection)
-        self.view.bind('<Configure>', lambda e: self.view.see('end') if self.follow else None, add='+')
+        self.view.bind('<Configure>', lambda e: self.view.see('end-3c') if self.follow else None, add='+')
         self.bind('<Control-f>', self.focus_search)
         self.bind('<Escape>', lambda e: self.stop_audio('再生を停止しました。'))
         self.view._whisper_refresh_tags = self.apply_colors
-        self.apply_colors()
-        ttk.Label(outer, textvariable=self.summary, style='Sub.TLabel', wraplength=310).grid(row=5, column=0, sticky='ew', pady=7)
-        buttons = ttk.Frame(outer)
-        buttons.grid(row=6, column=0, sticky='ew')
+        ttk.Label(history, textvariable=self.summary, style='Sub.TLabel', wraplength=310).grid(row=1, column=0, sticky='ew', pady=7)
+        buttons = ttk.Frame(history)
+        buttons.grid(row=2, column=0, sticky='ew')
         self.older = ttk.Button(buttons, text='← 古い発言', command=lambda: self.turn_page(True))
         self.older.pack(side='left')
         self.newer = ttk.Button(buttons, text='新しい発言 →', command=lambda: self.turn_page(False))
         self.newer.pack(side='left', padx=4)
         ttk.Button(buttons, text='最新へ', style='Accent.TButton', command=self.latest).pack(side='right')
-        audio_bar = ttk.Frame(outer)
-        audio_bar.grid(row=7, column=0, sticky='ew', pady=(8, 0))
+        audio_bar = ttk.Frame(history)
+        audio_bar.grid(row=3, column=0, sticky='ew', pady=(8, 6))
         audio_bar.columnconfigure(0, weight=1)
         speed_bar = ttk.Frame(audio_bar)
         speed_bar.grid(row=0, column=0, sticky='w')
@@ -109,6 +117,34 @@ class HistoryWindow(tk.Toplevel):
         self.audio_stop.grid(row=0, column=1, sticky='e', padx=(6, 0))
         ttk.Label(audio_bar, textvariable=self.audio_status, style='Sub.TLabel', wraplength=310).grid(
             row=1, column=0, columnspan=2, sticky='w', pady=(5, 0))
+        organized = ttk.Frame(self.panes, padding=(0, 8, 0, 0))
+        organized.columnconfigure(0, weight=1)
+        organized.rowconfigure(2, weight=1)
+        self.panes.add(organized, weight=2)
+        heading = ttk.Frame(organized)
+        heading.grid(row=0, column=0, sticky='ew')
+        ttk.Label(heading, text='整理した文章', font=('Yu Gothic UI', 12, 'bold')).pack(side='left')
+        self.organized_copy = ttk.Button(heading, text='コピー', width=7, command=self.copy_organized, state='disabled')
+        self.organized_copy.pack(side='right')
+        self.organized_note = tk.StringVar()
+        ttk.Label(organized, textvariable=self.organized_note, style='Sub.TLabel', wraplength=310).grid(
+            row=1, column=0, sticky='ew', pady=(2, 6))
+        reading = ttk.Frame(organized)
+        reading.grid(row=2, column=0, sticky='nsew')
+        self.organized_view = tk.Text(reading, wrap='word', font=('Yu Gothic UI', 11), state='disabled',
+                                      height=5, cursor='xterm', spacing1=2, spacing3=4, takefocus=True)
+        style_text(self.organized_view)
+        reading_scroll = ttk.Scrollbar(reading, command=self.scroll_organized)
+        self.organized_view.configure(yscrollcommand=reading_scroll.set)
+        reading_scroll.pack(side='right', fill='y')
+        self.organized_view.pack(fill='both', expand=True)
+        self.organized_view.bind('<Control-a>', self.select_all)
+        self.organized_view.bind('<Control-c>', self.copy_selection)
+        for sequence in ('<MouseWheel>', '<Button-4>', '<Button-5>', '<Button-1>', '<KeyPress-Up>', '<KeyPress-Prior>', '<KeyPress-Home>'):
+            self.organized_view.bind(sequence, self.pause_organized, add='+')
+        self.organized_view.bind('<Configure>', lambda e: self.organized_view.see('end-1c') if self.organized_follow else None, add='+')
+        self.organized_view._whisper_refresh_tags = self.apply_colors
+        self.apply_colors()
         self.query.trace_add('write', lambda *args: self.search_changed())
         self.protocol('WM_DELETE_WINDOW', app.hide_history)
         self.bind('<Destroy>', self.destroyed, add='+')
@@ -127,6 +163,8 @@ class HistoryWindow(tk.Toplevel):
         self.view.tag_configure('playing', background=colors['tint'])
         self.view.tag_raise('match')
         self.view.tag_raise('sel')
+        self.organized_view.tag_configure('name', foreground=colors['accent'], font=('Yu Gothic UI', 10, 'bold'))
+        self.organized_view.tag_configure('hint', foreground=colors['muted'])
 
     def entry_at(self, event):
         index = self.view.index(f'@{event.x},{event.y}')
@@ -262,7 +300,7 @@ class HistoryWindow(tk.Toplevel):
         left, top, right, bottom = area['rect']
         # Keep a margin for the title bar and the Windows taskbar.
         width = min(max(340, self.winfo_width()), right-left-16)
-        height = min(max(430, self.winfo_height()), bottom-top-64)
+        height = min(max(560, self.winfo_height()), bottom-top-64)
         self.geometry(f'{width}x{height}')
         self.update_idletasks()
         rect = w.RECT()
@@ -289,14 +327,28 @@ class HistoryWindow(tk.Toplevel):
         return 'break'
 
     def select_all(self, event=None):
-        self.view.tag_add('sel', '1.0', 'end-1c')
+        view = event.widget if event is not None else self.view
+        view.tag_add('sel', '1.0', 'end-1c')
         return 'break'
 
     def copy_selection(self, event=None):
-        if self.view.tag_ranges('sel'):
+        view = event.widget if event is not None else self.view
+        if view.tag_ranges('sel'):
             self.clipboard_clear()
-            self.clipboard_append(self.view.get('sel.first', 'sel.last'))
+            self.clipboard_append(view.get('sel.first', 'sel.last'))
         return 'break'
+
+    def copy_organized(self):
+        if self.organized_text:
+            self.clipboard_clear()
+            self.clipboard_append(self.organized_text)
+
+    def pause_organized(self, event=None):
+        self.organized_follow = False
+
+    def scroll_organized(self, *args):
+        self.pause_organized()
+        self.organized_view.yview(*args)
 
     def search_changed(self):
         self.stop_audio()
@@ -336,8 +388,10 @@ class HistoryWindow(tk.Toplevel):
             self.after_cancel(self.timer)
             self.timer = None
         self.follow = True
+        self.organized_follow = True
         self.end_key = None
         self.refresh(reset=True)
+        self.organized_view.see('end-1c')
 
     def update_summary(self):
         if not self.page:
@@ -358,12 +412,43 @@ class HistoryWindow(tk.Toplevel):
         for a, b in match_spans(text, self.query.get()):
             self.view.tag_add('match', f'{start}+{a}c', f'{start}+{b}c')
 
+    def refresh_organized(self, reset=False):
+        paragraphs = organized_paragraphs(self.app.segments, self.app.speakers, self.app.history_limit)
+        self.organized_note.set(f'直近{self.app.history_limit}件をつなげて表示 · 検索中も更新')
+        if paragraphs == self.organized_signature and not reset:
+            return
+        self.organized_signature = paragraphs
+        self.organized_text = '\n\n'.join((p.name + '\n' if p.name else '') + p.text for p in paragraphs)
+        self.organized_copy.configure(state='normal' if paragraphs else 'disabled')
+        first = self.organized_view.yview()[0]
+        if reset:
+            self.organized_follow = True
+        self.organized_view.configure(state='normal')
+        self.organized_view.delete('1.0', 'end')
+        for index, paragraph in enumerate(paragraphs):
+            if index:
+                self.organized_view.insert('end', '\n\n')
+            if paragraph.name:
+                self.organized_view.insert('end', paragraph.name + '\n', 'name')
+            self.organized_view.insert('end', paragraph.text)
+        if not paragraphs:
+            self.organized_view.insert('end', '発言が確定すると、ここにつなげた文章を表示します。', 'hint')
+        self.organized_view.configure(state='disabled')
+        if self.organized_follow:
+            self.organized_view.see('end-1c')
+        else:
+            self.organized_view.yview_moveto(first)
+
     def refresh(self, reset=False):
         source = str(self.app.result_path.parent) if self.app.result_path else None
-        if source != self.source:
+        source_changed = source != self.source
+        if source_changed:
             self.stop_audio()
             self.source, self.end_key, self.follow = source, None, not self.query.get().strip()
             reset = True
+        # The reading pane always follows the current result, even when the
+        # history's search/page is unchanged or paused on an older utterance.
+        self.refresh_organized(reset=source_changed)
         page = select_page(self.app.segments, self.app.speakers, self.query.get(), self.app.history_limit,
                            None if self.follow else self.end_key)
         self.page = page
@@ -402,7 +487,7 @@ class HistoryWindow(tk.Toplevel):
             self.view.configure(state='disabled')
             self.mark_playing()
             if self.follow:
-                self.view.see('end')
+                self.view.see('end-3c')
             elif reset:
                 self.view.yview_moveto(0)
             else:
