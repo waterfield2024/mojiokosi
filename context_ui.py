@@ -256,7 +256,8 @@ class ContextReviewDialog(tk.Toplevel):
         self.show_button.configure(state="normal" if find_review_segment(record, self.app.segments) else "disabled")
         suffix = "（後から加えた編集は上書きしません。「対象行を表示・編集」で確認できます。）" if state == "その後に編集" else ""
         explanation = record["reason"][:200] + ("…" if len(record["reason"]) > 200 else "")
-        label = "記憶による修正" if record.get("origin") == "manual_memory" else "AIの修正理由"
+        label = ('文章整理の理由' if record.get('origin') == 'live_organization' else
+                 "記憶による修正" if record.get("origin") == "manual_memory" else "AIの修正理由")
         self.reason.set(f"{label}：{explanation}\n状態：{state}{suffix}")
 
     def toggle(self, applied):

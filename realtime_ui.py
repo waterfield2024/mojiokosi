@@ -70,13 +70,14 @@ class RealtimeControls:
         self.live_diarize = tk.BooleanVar(value=processing["live_diarize"])
         self.live_context = tk.BooleanVar(value=processing["context_correct"])
         self.live_correct = tk.BooleanVar(value=processing["live_correct"])
+        self.live_organize = tk.BooleanVar(value=processing['live_organize'])
         self.live_noise = tk.BooleanVar(value=processing['live_noise'])
         self.live_previous_text = tk.BooleanVar(value=processing['live_previous_text'])
         self.live_sensitivity = tk.StringVar(value=next(label for label, key in SPEECH_LABELS.items()
                                                        if key == processing['speech_sensitivity']))
         self.live_speech_message = tk.StringVar(value=SPEECH_HINTS[processing['speech_sensitivity']])
         self.live_noise_message = tk.StringVar(value='ノイズ除去：準備前' if self.live_noise.get() else 'ノイズ除去：OFF（元の音声で認識）')
-        self.live_context_message = tk.StringVar(value="字幕は先に表示し、校正できた部分を後から差し替えます。" if self.live_correct.get() else "字幕の自動修正：OFF")
+        self.live_context_message = tk.StringVar(value=self.live_text_processing_hint())
         self.live_show = tk.BooleanVar(value=settings["display"]["show"])
         self.live_lock = tk.BooleanVar(value=settings["display"]["locked"])
         self.live_overlay_preview = False
@@ -117,6 +118,7 @@ class RealtimeControls:
         return {"model": LIVE_MODELS[self.live_model.get()],
                 "compute": COMPUTE_OPTIONS[self.compute.get()], "live_diarize": self.live_diarize.get(),
                 "live_correct": self.live_correct.get(), "live_noise": self.live_noise.get(),
+                "live_organize": self.live_organize.get(),
                 'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()]}
 
     def schedule_live_preload(self, *args):
@@ -191,7 +193,7 @@ class RealtimeControls:
         self.live_noise.trace_add('write', self.change_live_noise)
         self.live_sensitivity.trace_add('write', self.change_live_sensitivity)
         self.compute.trace_add("write", self.schedule_live_preload)
-        for variable in (self.live_diarize, self.live_correct):
+        for variable in (self.live_diarize, self.live_correct, self.live_organize):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=True))
         for variable in (self.live_context, self.live_chunk, self.live_previous_text):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=False))
@@ -374,11 +376,13 @@ class RealtimeControls:
         ttk.Label(row, textvariable=self.live_overlay_hint).pack(side="left", padx=10)
         self.live_post_controls = []
         for label, variable in [("リアルタイムで話者を自動判別", self.live_diarize),
+                                ("直近の文章を整理する（内容を保ち、区切り・句読点を調整）", self.live_organize),
                                 ("字幕の誤変換を文脈で自動修正（字幕を先に表示）", self.live_correct),
                                 ("停止後に文脈AI校正（修正前後を確認できます）", self.live_context)]:
             control = ttk.Checkbutton(frame, text=label, variable=variable)
             control.pack(anchor="w", pady=(8, 0)); self.live_post_controls.append(control)
         ttk.Label(frame, textvariable=self.live_context_message, style="Sub.TLabel").pack(anchor="w", pady=(5, 0))
+        ttk.Label(frame, text='整理前後はメイン画面の「文脈AI校正」で確認・取り消しできます。', style='Sub.TLabel').pack(anchor='w')
         ttk.Label(frame, text="「話者の名前を設定」で名前を付けられます。判別が難しい発言は「？」を表示します。",
                   style="Sub.TLabel").pack(anchor="w", pady=(8, 8))
         speaker_row = ttk.Frame(frame); speaker_row.pack(fill="x", pady=(0, 8))
@@ -554,6 +558,7 @@ class RealtimeControls:
     def live_processing_settings(self):
         from recording_settings import processing_preferences
         return processing_preferences({"live_diarize": self.live_diarize.get(), "live_correct": self.live_correct.get(),
+                                       'live_organize': self.live_organize.get(),
                                        "context_correct": self.live_context.get(), "chunk_seconds": int(self.live_chunk.get()),
                                        'live_noise': self.live_noise.get(),
                                        'live_previous_text': self.live_previous_text.get(),
@@ -635,8 +640,13 @@ class RealtimeControls:
         self.persist_live_recording_settings()
         self.show_live_recording_hint()
         if not self.proc:
-            self.live_context_message.set("字幕は先に表示し、校正できた部分を後から差し替えます。" if self.live_correct.get() else "字幕の自動修正：OFF")
+            self.live_context_message.set(self.live_text_processing_hint())
         if preload:self.schedule_live_preload()
+
+    def live_text_processing_hint(self):
+        if self.live_organize.get():
+            return '字幕は先に表示し、直近の文章を後から整理します。単語・数字・話者は変えません。'
+        return '字幕は先に表示し、校正できた部分を後から差し替えます。' if self.live_correct.get() else '字幕の自動修正：OFF'
 
     def ensure_overlay(self):
         if not self.overlay or self.overlay.closed:
@@ -764,7 +774,7 @@ class RealtimeControls:
         self.update_live_boundary_hint()
         self.live_recording = False
         self.live_level.set(0)
-        self.live_context_message.set("字幕の自動修正を準備中。字幕は先に表示します。" if self.live_correct.get() else "字幕の自動修正：OFF")
+        self.live_context_message.set(self.live_text_processing_hint())
         self.live_message.set("準備中です。「取り込み中」と表示されたら動画を再生してください。")
         overlay = self.ensure_overlay()
         overlay.clear()
@@ -777,6 +787,7 @@ class RealtimeControls:
                    "chunk_seconds": int(self.live_chunk.get()), "live_diarize": self.live_diarize.get(), "diarize": False,
                    "num_speakers": self.speaker_count(), "context_correct": self.live_context.get(),
                    "live_correct": self.live_correct.get(),
+                   "live_organize": self.live_organize.get(),
                    "live_noise": self.live_noise.get(),
                    'live_previous_text': self.live_previous_text.get(),
                    'segmentation': SEGMENTATION_MODES[self.live_segmentation.get()],
@@ -844,6 +855,7 @@ class RealtimeControls:
                 key = record["segment_id"]
                 row = next((r for r in self.segments if r.get("segment_id") == key), None)
                 if (row is not None and row["text"] == record["before"]
+                        and (record.get('origin') != 'live_organization' or row.get('speaker', '') == record.get('speaker', ''))
                         and key not in self.result_data.get("live_text_edits", {})):
                     try:
                         _, blocked = filter_change(record["before"], record["after"])

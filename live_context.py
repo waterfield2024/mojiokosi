@@ -42,6 +42,9 @@ def snapshot(data, seen):
 
 
 def proofread(request):
+    if request.get('task') == 'organize':
+        from live_organization import proofread as organize
+        return organize(request)
     import context_ai as ai
     targets = request["targets"]
     schema = deepcopy(SCHEMA)
@@ -79,16 +82,26 @@ def apply_changes(data, changes):
         if key in data.get("live_text_edits", {}):
             continue
         row = next((r for r in data["segments"] if r.get("segment_id") == key), None)
-        if row is None or row["text"] != change["before"] or not acceptable_live_change(row["text"], change["after"]):
+        validator = acceptable_live_change
+        proposal = change['after']
+        if change.get('origin') == 'live_organization':
+            from live_organization import punctuation_change, normalize_proposal
+            validator = punctuation_change
+            proposal = normalize_proposal(data, key, proposal)
+            if row is not None and row.get('speaker', '') != change.get('speaker', ''):
+                continue
+        if row is None or row["text"] != change["before"] or not validator(row["text"], proposal):
             continue
-        text, _ = filter_change(row["text"], change["after"])
-        if not acceptable_live_change(row["text"], text):
+        text, _ = filter_change(row["text"], proposal)
+        if not validator(row["text"], text):
             continue
         record = {"id": uuid.uuid4().hex, "run_id": "live", "segment_id": key,
                   "start": row["start"], "end": row["end"], "speaker": row.get("speaker", ""),
                   "before": row["text"], "after": text, "reason": change["reason"],
                   "status": "applied", "had_words": "words" in row, "words_before": deepcopy(row.get("words")),
-                  "model": MODEL, "created_at": datetime.now(timezone.utc).isoformat(), "live": True}
+                  "model": change.get('model', MODEL), "created_at": datetime.now(timezone.utc).isoformat(), "live": True}
+        if change.get('origin'):
+            record['origin'] = change['origin']
         row.setdefault("live_asr_text", row["text"])
         row.update(text=text, words=[])
         data.setdefault("context_review", []).append(record)
@@ -102,7 +115,7 @@ class LiveProofreader:
         self.compute = compute
         self.ready = self.busy = self.failed = False
         self.events = queue.Queue()
-        self.state = "字幕の自動修正を準備中。字幕は先に表示します。"
+        self.state = "文脈AIを準備中。字幕は先に表示します。"
         self.proc = self.job = self.log = None
         self.started = time.monotonic()
         try:
@@ -138,9 +151,13 @@ class LiveProofreader:
             except queue.Empty: break
             if event["kind"] == "ready":
                 self.ready = True
-                self.state = "字幕の自動修正：有効（先に表示し、校正後に差し替え）"
+                self.state = "文脈AIの準備ができました。字幕は先に表示し、処理後に差し替えます。"
             elif event["kind"] == "done":
                 self.busy = False
+                if event.get('warning'):
+                    self.state = event['warning']
+                elif event.get('task') == 'organize':
+                    self.state = '文章整理：有効（内容を保ち、直近の発言の区切り・句読点を整理）'
                 replies.append(event)
             elif event["kind"] == "error":
                 if not self.failed:
@@ -196,11 +213,19 @@ def worker():
         for line in sys.stdin:
             request = json.loads(line)
             started = time.monotonic()
-            changes = proofread(request)
+            warning = ''
+            try:
+                changes = proofread(request)
+            except Exception:
+                if request.get('task') != 'organize':
+                    raise
+                changes = []
+                warning = '文章整理AIの応答を見送りました。原文を保ち、次の発言で再試行します。'
             elapsed = time.monotonic() - started
-            if elapsed > RESPONSE_LIMIT:
+            if elapsed > RESPONSE_LIMIT and request.get('task') != 'organize':
                 raise TimeoutError()
-            emit(kind="done", session=request["session"], changes=changes, seconds=round(elapsed, 3))
+            emit(kind="done", session=request["session"], changes=changes, seconds=round(elapsed, 3),
+                 task=request.get('task', 'correct'), warning=warning)
     except Exception as exc:
         print(str(exc), file=sys.stderr, flush=True)
         emit(kind="error", message="字幕の自動修正は速度不足・エラーで休止中。録音・字幕は続きます。")

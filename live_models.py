@@ -96,7 +96,7 @@ class LiveModels:
 
     def proofreader_for(self, request):
         from live_context import LiveProofreader
-        enabled = request.get('live_correct', False)
+        enabled = request.get('live_correct', False) or request.get('live_organize', False)
         compute = request.get('compute', 'auto')
         if self.proofreader and (not enabled or self.proofreader.compute != compute
                                 or not self.alive(self.proofreader) or self.proofreader.failed):

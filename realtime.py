@@ -65,7 +65,7 @@ def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=No
             current_result = transcribe_with_prompt(recognizer, pcm[(pa - a) * 2:(pb - a) * 2], hint)
         else:
             current_result = result
-        current = live_rows(current_result, pa, pb, max(core, pa), previous + rows)
+        current = live_rows(current_result, pa, pb, max(core, pa), previous + rows, speaker=part['speaker'])
         if speech is not None:
             current = keep_spoken_rows(current, speech, sensitivity)
         for row in current:
@@ -73,7 +73,7 @@ def recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched=No
         rows.extend(current)
         yield current, part
 
-def live_rows(result, start, end, core, previous):
+def live_rows(result, start, end, core, previous, speaker=None):
     """Convert relative word times and remove only the already consumed overlap."""
     rows = []
     duration = (end - start) / RATE
@@ -83,6 +83,7 @@ def live_rows(result, start, end, core, previous):
         text = str(raw.get("text", "")).strip()
         if not text:
             continue
+        original_text = text
         a = max(0, min(duration, float(raw.get("start", 0))))
         b = max(a, min(duration, float(raw.get("end", duration))))
         offset = start / RATE
@@ -113,17 +114,25 @@ def live_rows(result, start, end, core, previous):
             a = max(a, core / RATE)
         # Short-window word timing can drift across the overlap boundary even when
         # structurally valid. Remove an exact repeated prefix only at that boundary.
-        if start < core and previous and a <= core / RATE + .35:
+        if (start < core and previous and a <= core / RATE + .35
+                and (speaker is None or previous[-1].get('speaker', '') == speaker)):
             old = previous[-1].get("live_asr_text", previous[-1]["text"]).rstrip("。、.!?！？ \t\n")
+            original_overlap = text
             for n in range(min(len(old), len(text), 80), 1, -1):
                 if old.endswith(text[:n]):
                     text = text[n:].lstrip()
                     words = []  # A removed prefix may cut through a tokenizer word.
                     break
+            if text == original_overlap:
+                from live_organization import overlap_prefix
+                text = overlap_prefix(old, text)
+                if text != original_overlap:
+                    words = []
         if not text or b < a:
             continue
         row = {"id": uuid.uuid4().hex, "start": round(a, 3), "end": round(max(a, b), 3),
                "text": text, "words": words, "speaker": "", "speaker_review": True}
+        row['live_original_text'] = original_text
         row['live_prompt_eligible'] = reliable(raw)
         row["segment_id"] = row["id"]
         rows.append(row)
@@ -149,6 +158,9 @@ def run_live(request, job, models=None):
     if type(use_previous) is not bool:
         raise ValueError('前の文章を参考に認識する設定はオンかオフを選んでください。')
     use_previous = use_previous and model in WHISPER_MODELS
+    organize = request.get('live_organize', False)
+    if type(organize) is not bool:
+        raise ValueError('文章整理はオンかオフを選んでください。')
     prompt = str(request.get("prompt", ""))[:1000]
     rules = normalize_rules(request.get("correction_rules", []))
     if rules:
@@ -164,6 +176,8 @@ def run_live(request, job, models=None):
             "segments": [], "speakers": {}, "live_incomplete": True, "recording_complete": False,
             "recording_device": request["device"]["name"]}
     data['live_previous_text'] = use_previous
+    data['live_organize'] = organize
+    data['live_diarize'] = request.get('live_diarize', True)
     data['segmentation'] = segmentation
     data['pause_seconds'] = pause_seconds
     data['max_utterance_seconds'] = max_utterance_seconds
@@ -188,6 +202,7 @@ def run_live(request, job, models=None):
     proofreader = None
     context_session = uuid.uuid4().hex
     context_seen = set()
+    organization_seen = {}
     context_state = ""
     slow_chunks = 0
     from live_noise import LiveNoiseReducer, update_control
@@ -230,7 +245,7 @@ def run_live(request, job, models=None):
             emit('live_noise_status', **state)
             noise_state = state
 
-    def service_context(submit=True):
+    def service_context(submit=True, final=False):
         nonlocal context_state
         if not proofreader:
             return
@@ -253,11 +268,22 @@ def run_live(request, job, models=None):
         if proofreader.state != context_state:
             context_state = proofreader.state
             emit("live_context_status", text=context_state)
-        if (submit and not stopped() and capture and not capture.halt.is_set()
-                and data["segments"] and capture.total / RATE - data["segments"][-1]["end"] < 6):
-            value = snapshot(data, context_seen)
+        if (submit and capture and data['segments']
+                and (final or not stopped() and not capture.halt.is_set()
+                     and capture.total / RATE - data['segments'][-1]['end'] < 6)):
+            value = None
+            if organize:
+                from live_organization import snapshot as organization_snapshot
+                value = organization_snapshot(data, organization_seen, final=final)
+            if value is None and request.get('live_correct', False) and not final:
+                value = snapshot(data, context_seen)
             if value and proofreader.submit(value, context_session):
-                context_seen.update(r["segment_id"] for r in value["targets"])
+                if value.get('task') == 'organize':
+                    organization_seen[value['key']] = True
+                    if len(organization_seen) > 64:
+                        del organization_seen[next(iter(organization_seen))]
+                else:
+                    context_seen.update(r["segment_id"] for r in value["targets"])
     try:
         status = lambda text: emit("status", text=text)
         if models:
@@ -282,7 +308,7 @@ def run_live(request, job, models=None):
             except Exception as exc:
                 data["speaker_error"] = str(exc)
                 emit("warning", title="リアルタイム話者判別", message="話者判別を開始できません。話者不明として録音・文字起こしを続けます。\n" + str(exc))
-        if request.get("live_correct", False):
+        if request.get("live_correct", False) or organize:
             if models:
                 proofreader = models.proofreader_for(request)
             else:
@@ -292,7 +318,8 @@ def run_live(request, job, models=None):
                 except Exception:
                     pass
             if not proofreader:
-                emit("live_context_status", text="字幕の自動修正を準備できません。録音・字幕は続きます。")
+                emit("live_context_status", text="文脈AIを準備できません。基本的な区切りの整理と録音・字幕は続きます。" if organize else
+                     "字幕の自動修正を準備できません。録音・字幕は続きます。")
         if recording_mode == "screen":
             from screen_capture import ScreenRecorder, validate_target
             selected = validate_target(request.get("screen_monitor") or {})
@@ -457,10 +484,22 @@ def run_live(request, job, models=None):
                      remembered_speakers=data.get('remembered_speakers', {}), learned_records=completed_records,
                      device=recognizer.device, lag=round(lag,1),
                      timing={'audio_end':b/RATE,'processing_seconds':round(time.monotonic()-processing_started,3)})
+            if organize:
+                from live_organization import boundary_changes
+                from live_context import apply_changes
+                try:
+                    records = apply_changes(data, boundary_changes(data))
+                except (OSError, ValueError):
+                    records = []
+                    emit('live_context_status', text='修正の記憶を確認できないため文章整理を見送り、原文を保っています。')
+                if records:
+                    write_json(folder / 'result.json', data)
+                    emit('live_corrections', records=records)
             slow_chunks = slow_chunks + 1 if lag > 1.2 else 0
             if proofreader and slow_chunks >= 2 and not proofreader.failed:
                 proofreader.failed = True
-                proofreader.state = "文字認識を優先して字幕の自動修正を休止中。"
+                proofreader.state = ('文字認識を優先して文脈AIを休止中。基本的な区切りの整理は続けます。' if organize else
+                                     "文字認識を優先して字幕の自動修正を休止中。")
                 proofreader.close()
     except LiveStopped:
         pass
@@ -494,6 +533,17 @@ def run_live(request, job, models=None):
             noise.close()
             speech_gate.close()
         service_context(submit=False)
+        if organize and proofreader and proofreader.ready and not proofreader.failed and data['segments']:
+            # Finish only the bounded recent window after audio capture has stopped.
+            from live_organization import TIMEOUT, snapshot as organization_snapshot
+            emit('status', text='録音は停止しました。最後の文章の区切り・句読点を整理しています…')
+            deadline = time.monotonic() + TIMEOUT
+            while time.monotonic() < deadline and not proofreader.failed and not (models and models.closing()):
+                service_context(final=True)
+                if not proofreader.busy and organization_snapshot(data, organization_seen, final=True) is None:
+                    break
+                time.sleep(.05)
+            service_context(submit=False)
         if proofreader and (not models or request.get("context_correct", False)):
             proofreader.close()
         if recognizer and not models:
