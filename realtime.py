@@ -17,19 +17,33 @@ from user_data import data_path
 from speech_gate import SpeechGate, overlaps_speech, keep_spoken_rows
 from speech_preferences import profile as speech_profile, read_control as speech_control
 from live_prompt import WHISPER_MODELS, make_prompt, reliable, transcribe_with_prompt
+from utterance_audio import AudioChunk, mode as segmentation_mode
 
 def next_live_chunk(chunks, pending, max_samples):
     """Catch up by joining queued audio, never dropping unrecognized speech."""
     chunk = pending.popleft() if pending else chunks.get(timeout=.1)
     if chunk is None:
         return None
+    if isinstance(chunk, AudioChunk):
+        # A newer snapshot (including its final result) supersedes the draft of
+        # the SAME utterance. Never merge or discard distinct final utterances.
+        while not chunk.final:
+            try:
+                following = chunks.get_nowait()
+            except queue.Empty:
+                break
+            if not isinstance(following, AudioChunk) or following.utterance != chunk.utterance:
+                pending.append(following)
+                break
+            chunk = following
+        return chunk
     a, b, core = chunk
     while True:
         try:
             following = chunks.get_nowait()
         except queue.Empty:
             break
-        if following is None or following[1] - a > max_samples:
+        if following is None or isinstance(following, AudioChunk) or following[1] - a > max_samples:
             pending.append(following)
             break
         b = following[1]
@@ -126,6 +140,7 @@ def run_live(request, job, models=None):
     if model not in ALLOWED_MODELS or request.get("language", "ja") not in {"ja", "en", "auto"}:
         raise ValueError("認識設定が正しくありません。")
     seconds = max(2, min(10, int(request.get("chunk_seconds", 2))))
+    segmentation = segmentation_mode(request.get('segmentation', 'utterance'))
     sensitivity = speech_profile(request.get('speech_sensitivity', 'balanced')).key
     use_previous = request.get('live_previous_text', True)
     if type(use_previous) is not bool:
@@ -146,6 +161,7 @@ def run_live(request, job, models=None):
             "segments": [], "speakers": {}, "live_incomplete": True, "recording_complete": False,
             "recording_device": request["device"]["name"]}
     data['live_previous_text'] = use_previous
+    data['segmentation'] = segmentation
     # A checkpoint exists even if capture or the engine later fails.
     write_json(folder / "result.json", data)
     emit("checkpoint", result_path=str(folder / "result.json"))
@@ -277,13 +293,16 @@ def run_live(request, job, models=None):
         capture = LoopbackCapture(request["device"], wav, chunks, stopped, seconds,
                                    lambda **values: emit("live_meter", **values))
         capture.set_sensitivity(sensitivity, job / 'speech-control.json')
+        capture.set_segmentation(segmentation)
         capture.start()
         inference = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-asr")
         deadline = time.monotonic() + 15
         while not capture.ready.wait(.1):
+            if stopped():
+                raise LiveStopped()
             if capture.done.is_set():
                 raise RuntimeError(capture.error or "音声を取り込めませんでした。")
-            if time.monotonic() > deadline or stopped():
+            if time.monotonic() > deadline:
                 raise LiveStopped()
         data["device"] = recognizer.device
         if recorder:
@@ -311,6 +330,8 @@ def run_live(request, job, models=None):
                     error = capture.error
                 break
             a, b, core = chunk
+            utterance = chunk.utterance if isinstance(chunk, AudioChunk) else None
+            provisional = isinstance(chunk, AudioChunk) and not chunk.final
             processing_started = time.monotonic()
             with wav.open("rb") as file:
                 file.seek(44 + a * 2)
@@ -334,6 +355,8 @@ def run_live(request, job, models=None):
                 data['duration'] = capture.total / RATE
                 write_json(folder / 'result.json', data)
                 emit('status', text='発話待ち…（無音・雑音の区間は字幕にしません）')
+                if utterance is not None:
+                    emit('live_preview', utterance=utterance, segments=[], speakers={})
                 continue
             def context_prompt(start, end, history):
                 # Use audio time, not processing time: delayed chunks must keep
@@ -346,22 +369,26 @@ def run_live(request, job, models=None):
             # ASR runs in a separate native process and can overlap the CPU speaker model.
             prefetched = inference.submit(transcribe_with_prompt, recognizer, pcm, hint) if live_diarizer else None
             turns = []
+            speaker_data = ({'speakers': dict(data['speakers']),
+                             'remembered_speakers': dict(data.get('remembered_speakers', {})),
+                             'speaker_name_edits': data.get('speaker_name_edits', {})} if provisional else data)
             if live_diarizer:
                 emit("status", text="再生中の声を判別しています…")
                 # Reuse a bounded recent window; never reprocess the whole recording.
-                context_start = max(0, b - 8 * RATE)
+                context_start = max(0, min(a, b - 8 * RATE))
                 try:
-                    turns = live_diarizer.process(wav, context_start, b, data["speakers"])
+                    turns = live_diarizer.process(wav, context_start, b, speaker_data['speakers'], preview=provisional)
                     from speaker_memory import PROFILE_FILE
-                    write_json(folder / PROFILE_FILE, {"version": 1, "profiles": live_diarizer.profiles})
-                    manual_names = data.get("speaker_name_edits", {})
-                    for speaker in data.get("remembered_speakers", {}):
+                    if not provisional:
+                        write_json(folder / PROFILE_FILE, {"version": 1, "profiles": live_diarizer.profiles})
+                    manual_names = speaker_data.get("speaker_name_edits", {})
+                    for speaker in speaker_data.get("remembered_speakers", {}):
                         if speaker not in manual_names:
-                            data["speakers"][speaker] = default_name(speaker)
-                    data["remembered_speakers"] = live_diarizer.remembered
+                            speaker_data['speakers'][speaker] = default_name(speaker)
+                    speaker_data['remembered_speakers'] = live_diarizer.remembered
                     for speaker, remembered in live_diarizer.remembered.items():
                         if speaker not in manual_names:
-                            data["speakers"][speaker] = remembered["name"]
+                            speaker_data['speakers'][speaker] = remembered['name']
                     if live_diarizer.memory_error and live_diarizer.memory_error != memory_warning:
                         memory_warning = live_diarizer.memory_error
                         emit("warning", title="覚えた話者", message=memory_warning + "\n通常の話者判別で続けます。")
@@ -373,9 +400,13 @@ def run_live(request, job, models=None):
             ranges = (speaker_ranges(turns, a / RATE, b / RATE) if live_speakers else
                       [{"start": a / RATE, "end": b / RATE, "speaker": "", "speaker_review": False}])
             lag = max(0, capture.total / RATE - b / RATE)
+            completed_rows, completed_records = [], []
             for rows, part in recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched, speech, sensitivity, prompt_for):
                 for row in rows:
                     row['noise_reduced'] = noise_applied
+                completed_rows.extend(rows)
+                if provisional:
+                    continue
                 if live_speakers:
                     live_turns.append({**part, "start": max(core / RATE, part["start"])})
                 data["segments"].extend(rows)
@@ -401,10 +432,21 @@ def run_live(request, job, models=None):
                 data["duration"] = capture.total / RATE
                 write_json(folder / "result.json", data)
                 lag = max(0, capture.total / RATE - b / RATE)
-                emit("live_segments", segments=rows, speakers=data["speakers"], remembered_speakers=data.get("remembered_speakers", {}),
-                     learned_records=learned_records, device=recognizer.device, lag=round(lag, 1),
-                     timing={"audio_end": b / RATE, "processing_seconds": round(time.monotonic() - processing_started, 3)})
+                completed_records.extend(learned_records)
+                if utterance is None:
+                    emit("live_segments", segments=rows, speakers=data["speakers"], remembered_speakers=data.get("remembered_speakers", {}),
+                         learned_records=learned_records, device=recognizer.device, lag=round(lag, 1),
+                         timing={"audio_end": b / RATE, "processing_seconds": round(time.monotonic() - processing_started, 3)})
                 emit("status", text=f"PCの音声を文字起こし中 / {recognizer.device} / 認識待ち {lag:.1f}秒")
+            if provisional:
+                emit('live_preview', utterance=utterance, segments=completed_rows,
+                     speakers=normalize_names(completed_rows, speaker_data['speakers']))
+                continue
+            if utterance is not None:
+                emit('live_segments', utterance=utterance, segments=completed_rows, speakers=data['speakers'],
+                     remembered_speakers=data.get('remembered_speakers', {}), learned_records=completed_records,
+                     device=recognizer.device, lag=round(lag,1),
+                     timing={'audio_end':b/RATE,'processing_seconds':round(time.monotonic()-processing_started,3)})
             slow_chunks = slow_chunks + 1 if lag > 1.2 else 0
             if proofreader and slow_chunks >= 2 and not proofreader.failed:
                 proofreader.failed = True
@@ -450,7 +492,7 @@ def run_live(request, job, models=None):
             live_diarizer.close()
         if models:
             models.park()
-        data["recording_complete"] = bool(capture and capture.done.is_set() and not capture.error)
+        data["recording_complete"] = bool(capture and capture.done.is_set() and not capture.error and wav.is_file())
         if capture:
             data['duration'] = capture.total / RATE
         data["live_incomplete"] = bool(error)

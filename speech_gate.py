@@ -144,3 +144,40 @@ class SpeechGate:
         self.detector = None
         self.attempted = False
         self.warning = ''
+
+
+class SpeechActivity(SpeechGate):
+    """Independent streaming VAD owned solely by the capture thread."""
+    def __init__(self, models, sensitivity='balanced'):
+        super().__init__(models, sensitivity)
+        self.reset_buffer()
+
+    def reset_buffer(self):
+        from collections import deque
+        self.pending = bytearray()
+        self.peaks = deque(maxlen=32)
+        self.active = False
+
+    def close(self):
+        super().close()
+        self.reset_buffer()
+
+    def feed(self, pcm):
+        self.prepare()
+        if self.detector is None:return None
+        try:
+            self.pending.extend(pcm)
+            while len(self.pending) >= 1024:
+                samples = np.frombuffer(bytes(self.pending[:1024]), '<i2').astype('float32')/32768
+                del self.pending[:1024]
+                self.peaks.append(float(np.max(np.abs(samples))))
+                peak = max(self.peaks)
+                if peak < .1:samples *= min(self.profile.max_gain, .1/max(peak, 1e-8))
+                self.detector.accept_waveform(samples)
+                self.active = self.detector.is_speech_detected()
+                while not self.detector.empty():self.detector.pop()
+            return self.active
+        except Exception as exc:
+            self.detector = None
+            self.warning = '声の切れ目を判定できないため、音量の切れ目で続けます：' + str(exc)[:150]
+            return None

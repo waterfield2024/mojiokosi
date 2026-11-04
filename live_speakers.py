@@ -131,6 +131,17 @@ class LiveDiarizer:
         self.tracker = SpeakerTracker(count)
         self.samples = {}
 
+    def preview(self, pcm, offset):
+        # Repeated drafts must not train the speaker tracker on the same voice
+        # multiple times or replace the voice samples used for final learning.
+        from copy import deepcopy
+        original = self.tracker, self.samples
+        self.tracker, self.samples = deepcopy(original)
+        try:
+            return self.process(pcm, offset), self.samples
+        finally:
+            self.tracker, self.samples = original
+
     def process(self, pcm, offset):
         samples = np.frombuffer(pcm, dtype="<i2").astype("float32") / 32768
         if len(samples) < RATE * .3:
@@ -251,8 +262,8 @@ class LiveSpeakerProcess:
             raise RuntimeError("次の録音用に話者判別を準備できませんでした。")
         self.profiles, self.remembered, self.memory_error = {}, {}, ""
 
-    def process(self, wav, start, end, names):
-        self.proc.stdin.write(json.dumps({"wav": str(wav), "start": start, "end": end, "names": list(names)}) + "\n")
+    def process(self, wav, start, end, names, *, preview=False):
+        self.proc.stdin.write(json.dumps({"wav": str(wav), "start": start, "end": end, "names": list(names), 'preview': preview}) + "\n")
         self.proc.stdin.flush()
         response = self.receive(45)
         self.profiles = response.get("profiles", {})
@@ -296,14 +307,17 @@ def speaker_worker():
                 f.seek(44 + a * 2)
                 pcm = f.read((b - a) * 2)
             worker.tracker.reserve(request.get("names", []))
-            turns = worker.process(pcm, a / RATE)
+            if request.get('preview', False):
+                turns, profiles = worker.preview(pcm, a / RATE)
+            else:
+                turns, profiles = worker.process(pcm, a / RATE), worker.samples
             remembered, memory_error = {}, ""
             if memory:
                 try:
-                    remembered = match_samples(worker.samples, memory.load())
+                    remembered = match_samples(profiles, memory.load())
                 except Exception as exc:
                     memory_error = str(exc)
-            print(json.dumps({"turns": turns, "profiles": worker.samples,
+            print(json.dumps({"turns": turns, "profiles": profiles,
                               "remembered": remembered, "memory_error": memory_error}), flush=True)
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)

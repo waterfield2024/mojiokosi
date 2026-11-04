@@ -53,6 +53,7 @@ class SubtitleOverlay:
         self.notice = ""
         self.notice_until = 0
         self.current_page = None
+        self.partial_utterance = None
         self.speakers = {}
         self.until = 0
         self.shown_at = 0
@@ -313,6 +314,39 @@ class SubtitleOverlay:
         self.until = min(self.until, max(now, self.shown_at + .75))
         self.advance(now)
 
+    def clear_partial(self, utterance=None):
+        if self.partial_utterance is not None and (utterance is None or utterance == self.partial_utterance):
+            self.clear()
+
+    def show_partial(self, utterance, rows):
+        if not rows:
+            self.clear_partial(utterance)
+            return
+        self.show_utterance_tail(rows, seconds=10)
+        self.partial_utterance = utterance
+
+    def commit_utterance(self, utterance, rows):
+        if self.partial_utterance == utterance:
+            self.clear_partial(utterance)
+            # The beginning was already shown while speaking. Update the final
+            # visible tail instead of replaying the entire long utterance.
+            self.show_utterance_tail(rows)
+        else:
+            self.push_segments(rows)
+
+    def show_utterance_tail(self, rows, *, seconds=None):
+        pages = []
+        for row in rows:
+            pages.extend(self.segment_pages(row['text'], {'speaker':row.get('speaker',''),
+                         'review':bool(row.get('speaker_review')), 'id':row.get('segment_id') or row.get('id')}))
+        if not pages:
+            return
+        self.pages.clear()
+        self.current_page = pages[-1]
+        self.shown_at = time.monotonic()
+        self.until = self.shown_at + (seconds if seconds is not None else min(6, max(1.5, len(pages[-1]['text'])/10)))
+        self.draw()
+
     def update_assignment(self, segment_id, speaker):
         for page in ([self.current_page] if self.current_page else []) + list(self.pages):
             if isinstance(page, dict) and page.get("id") == segment_id:
@@ -346,6 +380,7 @@ class SubtitleOverlay:
 
     def clear(self):
         self.pages.clear()
+        self.partial_utterance = None
         self.current_page = None
         self.text = ""
         self.until = 0

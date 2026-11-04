@@ -43,6 +43,8 @@ def processing_preferences(data=None, *, context_default=False):
     saved["chunk_seconds"] = seconds
     from speech_preferences import profile
     saved['speech_sensitivity'] = profile(data.get('speech_sensitivity', 'balanced')).key
+    from utterance_audio import mode
+    saved['segmentation'] = mode(data.get('segmentation', 'utterance'))
     return saved
 
 

@@ -109,6 +109,7 @@ class HaasIntegration(unittest.TestCase):
 
         class Capture:
             def set_sensitivity(self, *args): pass
+            def set_segmentation(self, value): pass
             def __init__(self, device, wav, chunks, stopped, seconds, meter):
                 self.total, self.error = 16000, None
                 self.ready, self.done, self.halt = threading.Event(), threading.Event(), threading.Event()

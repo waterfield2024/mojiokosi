@@ -147,6 +147,7 @@ class LiveSensitivity(unittest.TestCase):
                 def start(self):pass
                 def stop(self):pass
                 def set_sensitivity(self,value,*args):capture_settings.append(value)
+                def set_segmentation(self, value): pass
             class Gate(SpeechGate):
                 def prepare(self,status=lambda _:None,stopped=lambda:False):
                     if stopped():raise RuntimeError('Normal stop must still drain audio')

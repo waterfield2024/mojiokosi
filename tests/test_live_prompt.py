@@ -162,6 +162,7 @@ class LivePromptPipeline(unittest.TestCase):
                 def start(self):pass
                 def stop(self):pass
                 def set_sensitivity(self,*args):pass
+                def set_segmentation(self, value): pass
             for index,(model,enabled) in enumerate((('base',True),('base',True),('base',False),('granite-turboctc',True),('haas-ja-v1.0',True))):
                 prompts.clear();events=[];job=folder/str(index);job.mkdir()
                 request=dict(model=model,device={'name':'fixture'},prompt='用語',live_previous_text=enabled,

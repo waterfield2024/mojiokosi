@@ -7,6 +7,7 @@ import time
 import wave
 import numpy as np
 from speech_preferences import profile, read_control
+from utterance_audio import UtteranceChunker, mode as segmentation_mode
 
 RATE = 16000
 
@@ -72,6 +73,7 @@ class LoopbackCapture:
         self.seconds, self.meter = seconds, meter
         self.profile = profile()
         self.speech_control = None
+        self.segmentation = 'utterance'
         self.total = 0
         self.error = None
         self.epoch = None
@@ -92,22 +94,32 @@ class LoopbackCapture:
         if control_path is not None:
             self.speech_control = control_path
 
+    def set_segmentation(self, value):
+        self.segmentation = segmentation_mode(value)
+
     def update_chunker(self, chunker):
         # Apply live changes even while the ASR thread is busy with inference.
         if self.speech_control is not None:
             self.set_sensitivity(read_control(self.speech_control, self.profile.key))
         chunker.profile = self.profile
+        if isinstance(chunker, UtteranceChunker) and chunker.activity:
+            chunker.activity.configure(self.profile.key)
 
     def run(self):
         import pyaudiowpatch as pa
         raw = queue.Queue(maxsize=128)
         overflow = threading.Event()
-        audio = stream = writer = None
+        audio = stream = writer = chunker = activity = None
         last_meter = 0
         converter = None
         epoch = time.monotonic()
         stop_time = None
         try:
+            if self.segmentation == 'utterance':
+                from speech_gate import SpeechActivity
+                from asr import ROOT
+                activity = SpeechActivity(ROOT/'models', self.profile.key)
+                activity.prepare(stopped=self.stopped)
             audio = pa.PyAudio()
             info = audio.get_device_info_by_index(int(self.device["index"]))
             if not info.get("isLoopbackDevice") or info["name"] != self.device["name"]:
@@ -129,17 +141,23 @@ class LoopbackCapture:
             def submit(a, b, core):
                 writer._file.flush()
                 self.chunks.put((a, b, core))
-            chunker = Chunker(submit, self.seconds, self.profile.key)
+            chunker = (UtteranceChunker(self.chunks.put, self.seconds, self.profile.key, activity)
+                       if self.segmentation == 'utterance' else Chunker(submit, self.seconds, self.profile.key))
             epoch = time.monotonic()
             self.epoch = epoch
             stream.start_stream()
             self.ready.set()
+            activity_warning = ''
             def write_pcm(pcm):
+                nonlocal activity_warning
                 writer.writeframes(pcm)
                 writer._file.flush()
                 self.update_chunker(chunker)
                 chunker.feed(pcm)
                 self.total += len(pcm) // 2
+                if activity and activity.warning != activity_warning:
+                    activity_warning = activity.warning
+                    self.meter(seconds=self.total/RATE,level=0,segmentation_warning=activity_warning)
 
             def silence_until(seconds):
                 missing = max(0, round(seconds * RATE) - self.total)
@@ -182,10 +200,13 @@ class LoopbackCapture:
                 if now - last_meter >= .5:
                     self.meter(seconds=self.total / RATE, level=min(100, audioop.rms(pcm, 2) * 100 / 4000))
                     last_meter = now
-            chunker.finish()
         except Exception as exc:
             self.error = str(exc)
         finally:
+            if chunker:
+                # Finalize the captured tail even on a device disconnect.
+                chunker.finish()
+            if activity:activity.close()
             if stream:
                 try:
                     stream.close()

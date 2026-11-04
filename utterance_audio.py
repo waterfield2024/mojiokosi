@@ -1,0 +1,90 @@
+"""Growing live utterances: replaceable previews, durable final boundaries."""
+from dataclasses import dataclass
+import audioop
+from speech_preferences import profile
+
+RATE = 16000
+PAUSE_SECONDS = .7
+MAX_SECONDS = 12
+MODES = {'話の切れ目で区切る': 'utterance', '秒数で区切る（従来）': 'timed'}
+
+
+def mode(value='utterance'):
+    if not isinstance(value, str) or value not in MODES.values():
+        raise ValueError('音声の区切り方を一覧から選んでください。')
+    return value
+
+
+@dataclass(frozen=True)
+class AudioChunk:
+    start: int
+    end: int
+    core: int
+    utterance: int
+    final: bool
+
+    def __iter__(self):
+        return iter((self.start, self.end, self.core))
+
+
+class UtteranceChunker:
+    def __init__(self, submit, seconds=2, sensitivity='balanced', activity=None):
+        self.submit = submit
+        self.update_samples = int(seconds * RATE)
+        self.profile = profile(sensitivity)
+        self.total = self.core = self.voiced = self.last_voice = 0
+        self.start = None
+        self.utterance = 0
+        self.next_preview = 0
+        self.activity = activity
+        self.heard_speech = False
+
+    def feed(self, pcm):
+        # Bound checks and voice durations are independent of input block size.
+        for offset in range(0, len(pcm), RATE//50*2):
+            self.feed_frame(pcm[offset:offset+RATE//50*2])
+
+    def feed_frame(self, pcm):
+        a = self.total
+        self.total += len(pcm)//2
+        voice = bool(pcm) and audioop.rms(pcm, 2) >= self.profile.capture_rms
+        detected = self.activity.feed(pcm) if self.activity else None
+        if voice:
+            if self.start is None:
+                self.start = max(self.core, a - int(.25*RATE))
+                self.next_preview = a + self.update_samples
+                self.voiced = 0
+            self.voiced += len(pcm)//2
+        if detected:
+            self.heard_speech = True
+        # Start conservatively from energy, preserving very short/quiet replies.
+        # Once speech is detected, use the neural VAD to find its end even if
+        # background sound continues. A failed detector falls back to energy.
+        if detected or (voice and (detected is None or not self.heard_speech)):
+            self.last_voice = self.total
+        if self.start is None:
+            return
+        pause = self.total - self.last_voice >= int(PAUSE_SECONDS*RATE)
+        full = self.total - self.start >= MAX_SECONDS*RATE
+        if pause or full:
+            if self.voiced >= int(self.profile.capture_seconds*RATE):
+                self.publish(True)
+                self.core = self.total
+            self.utterance += 1
+            self.start = max(0,self.total-RATE) if full and not pause else None
+            if self.start is None:self.heard_speech = False
+            self.voiced = 0
+            self.next_preview = self.total + self.update_samples
+        elif (self.total >= self.next_preview and voice
+              and self.voiced >= int(self.profile.capture_seconds*RATE)):
+            self.publish(False)
+            self.next_preview = self.total + self.update_samples
+
+    def publish(self, final):
+        self.submit(AudioChunk(self.start,self.total,self.core,self.utterance,final))
+
+    def finish(self):
+        if self.start is not None and self.total > self.core and self.voiced >= int(self.profile.final_seconds*RATE):
+            self.publish(True)
+            self.core = self.total
+        self.start = None

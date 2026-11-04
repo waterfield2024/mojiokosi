@@ -217,6 +217,7 @@ class NoisePipeline(unittest.TestCase):
             self.addCleanup(reducer.close)
             class Capture:
                 def set_sensitivity(self, *args): pass
+                def set_segmentation(self, value): pass
                 def __init__(self, device, wav, chunks, stopped, seconds, meter):
                     self.total, self.error = 32000, None
                     self.ready, self.done, self.halt = threading.Event(), threading.Event(), threading.Event()
@@ -231,7 +232,7 @@ class NoisePipeline(unittest.TestCase):
                 heard.append(pcm)
                 (folder/'noise-control.json').write_text(json.dumps({'enabled': False}), 'utf-8')
                 return {'segments': [{'start': 0., 'end': 1., 'text': '発言'+str(len(heard))}]}
-            def speakers(path, start, end, names):
+            def speakers(path, start, end, names, *, preview=False):
                 with wave.open(str(path), 'rb') as audio:
                     speaker_audio.append(audio.readframes(audio.getnframes()))
                 return [{'start': 0., 'end': 2., 'speaker': 'speaker_0'}]

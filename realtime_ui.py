@@ -14,6 +14,7 @@ from subtitle_overlay import SubtitleOverlay
 from recognition_models import LIVE_MODELS,model_hint
 from speech_preferences import LABELS as SPEECH_LABELS, HINTS as SPEECH_HINTS
 from live_prompt import WHISPER_MODELS
+from utterance_audio import MODES as SEGMENTATION_MODES
 
 class RealtimeControls:
     def init_realtime(self):
@@ -58,6 +59,11 @@ class RealtimeControls:
         self.live_model = tk.StringVar(value=model_label)
         processing = processing_preferences(settings["processing"], context_default=self.context_auto_apply.get())
         self.live_chunk = tk.StringVar(value=str(processing["chunk_seconds"]))
+        self.live_segmentation = tk.StringVar(value=next(k for k,v in SEGMENTATION_MODES.items() if v == processing['segmentation']))
+        self.live_interval_label = tk.StringVar()
+        self.live_boundary_hint = tk.StringVar()
+        self.live_final_utterance = -1
+        self.update_live_boundary_hint()
         self.live_diarize = tk.BooleanVar(value=processing["live_diarize"])
         self.live_context = tk.BooleanVar(value=processing["context_correct"])
         self.live_correct = tk.BooleanVar(value=processing["live_correct"])
@@ -186,6 +192,7 @@ class RealtimeControls:
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=True))
         for variable in (self.live_context, self.live_chunk, self.live_previous_text):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=False))
+        self.live_segmentation.trace_add('write', self.change_live_segmentation)
 
     def update_live_controls(self):
         self.live_button.configure(state="normal" if not self.proc or self.operation == "realtime" else "disabled")
@@ -204,6 +211,7 @@ class RealtimeControls:
             self.live_refresh.configure(state="disabled" if busy or self.live_devices_loading else "normal")
             self.live_model_combo.configure(state="disabled" if busy else "readonly")
             self.live_chunk_combo.configure(state="disabled" if busy else "readonly")
+            self.live_segmentation_combo.configure(state='disabled' if busy else 'readonly')
             self.live_previous_check.configure(state='normal' if not busy and LIVE_MODELS[self.live_model.get()] in WHISPER_MODELS else 'disabled')
             self.update_screen_controls()
             for control in self.live_post_controls:
@@ -276,7 +284,7 @@ class RealtimeControls:
         self.live_model_combo = ttk.Combobox(row, textvariable=self.live_model,
                                              values=list(LIVE_MODELS), state="readonly", width=24)
         self.live_model_combo.pack(side="left", padx=(8, 18))
-        ttk.Label(row, text="音声を区切る間隔").pack(side="left")
+        ttk.Label(row, textvariable=self.live_interval_label).pack(side="left")
         from recording_settings import CHUNK_SECONDS
         self.live_chunk_combo = ttk.Combobox(row, textvariable=self.live_chunk, values=[str(n) for n in CHUNK_SECONDS],
                                              state="readonly", width=4)
@@ -285,6 +293,12 @@ class RealtimeControls:
         self.live_model_message = tk.StringVar(value=model_hint(LIVE_MODELS[self.live_model.get()]))
         ttk.Label(frame,textvariable=self.live_model_message,style="Sub.TLabel",wraplength=650).pack(anchor="w",pady=(0,8))
         self.live_model_combo.bind("<<ComboboxSelected>>",lambda event:self.live_model_message.set(model_hint(LIVE_MODELS[self.live_model.get()])),add="+")
+        row = ttk.Frame(frame); row.pack(fill='x', pady=(0,3))
+        ttk.Label(row,text='音声の区切り方').pack(side='left',padx=(0,8))
+        self.live_segmentation_combo = ttk.Combobox(row,textvariable=self.live_segmentation,
+            values=list(SEGMENTATION_MODES),state='readonly',width=25)
+        self.live_segmentation_combo.pack(side='left')
+        ttk.Label(frame,textvariable=self.live_boundary_hint,style='Sub.TLabel',wraplength=680).pack(anchor='w',pady=(0,8))
         self.live_previous_check = ttk.Checkbutton(frame, text='前の文章を参考に認識する（Whisper）', variable=self.live_previous_text)
         self.live_previous_check.pack(anchor='w')
         ttk.Label(frame, text='直近2つの発言を参考にします。6秒以上の無音でリセット／開始前に変更可',
@@ -522,7 +536,18 @@ class RealtimeControls:
                                        "context_correct": self.live_context.get(), "chunk_seconds": int(self.live_chunk.get()),
                                        'live_noise': self.live_noise.get(),
                                        'live_previous_text': self.live_previous_text.get(),
+                                       'segmentation': SEGMENTATION_MODES[self.live_segmentation.get()],
                                        'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()]})
+
+    def update_live_boundary_hint(self):
+        utterance = SEGMENTATION_MODES[self.live_segmentation.get()] == 'utterance'
+        self.live_interval_label.set('字幕の更新間隔' if utterance else '音声を区切る間隔')
+        self.live_boundary_hint.set('話の途中は暫定字幕を表示し、切れ目で確定します。長い発言は最大12秒で区切ります。'
+                                    if utterance else '設定した秒数、または短い無音で区切って認識します。')
+
+    def change_live_segmentation(self, *args):
+        self.update_live_boundary_hint()
+        self.change_live_processing(preload=False)
 
     def change_live_sensitivity(self, *args):
         value = SPEECH_LABELS.get(self.live_sensitivity.get())
@@ -682,6 +707,8 @@ class RealtimeControls:
         self.persist_edits()
         self.live_stop_requested = False
         self.live_phase = "preparing"
+        self.live_final_utterance = -1
+        self.update_live_boundary_hint()
         self.live_recording = False
         self.live_level.set(0)
         self.live_context_message.set("字幕の自動修正を準備中。字幕は先に表示します。" if self.live_correct.get() else "字幕の自動修正：OFF")
@@ -699,6 +726,7 @@ class RealtimeControls:
                    "live_correct": self.live_correct.get(),
                    "live_noise": self.live_noise.get(),
                    'live_previous_text': self.live_previous_text.get(),
+                   'segmentation': SEGMENTATION_MODES[self.live_segmentation.get()],
                    'speech_sensitivity': SPEECH_LABELS[self.live_sensitivity.get()],
                    "correction_rules": self.automatic_correction_rules(),
                    "speaker_memory_file": str(self.speaker_memory.path)}
@@ -846,11 +874,24 @@ class RealtimeControls:
             self.update_video_controls()
             return True
         if kind == "live_meter":
+            if 'segmentation_warning' in event:
+                if event['segmentation_warning']:
+                    self.live_boundary_hint.set(event['segmentation_warning'])
+                else:
+                    self.update_live_boundary_hint()
             self.live_level.set(event["level"])
             seconds = int(event["seconds"])
             if self.live_recording and not self.live_stop_requested:
                 label = "画面録画停止・録音は継続" if self.live_screen_failed else "画面録画ON" if self.live_active_mode == "screen" else "録音のみ"
                 self.live_message.set(f"取り込み中 {seconds // 60:02}:{seconds % 60:02}・{label} / 音量が動かないときは出力先を確認してください。")
+            return True
+        if kind == 'live_preview':
+            if event['utterance'] > self.live_final_utterance and self.overlay:
+                names = {**self.speakers, **event.get('speakers',{})}
+                for key in (self.result_data or {}).get('speaker_name_edits',{}):
+                    if key in self.speakers:names[key] = self.speakers[key]
+                self.overlay.set_speakers(names)
+                self.overlay.show_partial(event['utterance'], event['segments'])
             return True
         if kind == "live_segments":
             from correction_memory import filter_change
@@ -884,9 +925,14 @@ class RealtimeControls:
                 self.table.insert("", "end", iid=str(index), values=self.row_values(row))
             if event["segments"]:
                 self.table.see(str(len(self.segments) - 1))
-                if self.overlay:
-                    self.overlay.set_speakers(self.speakers)
+            if self.overlay:
+                self.overlay.set_speakers(self.speakers)
+                if 'utterance' in event:
+                    self.overlay.commit_utterance(event['utterance'], event['segments'])
+                elif event['segments']:
                     self.overlay.push_segments(event["segments"])
+            if 'utterance' in event:
+                self.live_final_utterance = max(self.live_final_utterance,event['utterance'])
             self.refresh_speaker_rows()
             self.refresh_history()
             self.check_pending_memories()
