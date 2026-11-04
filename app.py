@@ -82,6 +82,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.init_comparison()
         self.init_speaker_memory()
         self.build()
+        from update_ui import StartupUpdateCheck
+        self.update_checker = StartupUpdateCheck(self, ROOT)
         root.after(250, self.resume_saved_voice_pools)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(120, self.poll)
@@ -153,8 +155,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         ttk.Label(source_box,textvariable=self.model_message,style="Sub.TLabel",wraplength=800).pack(anchor="w")
         controls = ttk.Frame(source_box)
         controls.pack(fill="x", pady=(8, 0))
-        transcription_controls = ttk.LabelFrame(controls, text="  文字起こし  ", padding=(7, 5))
-        transcription_controls.pack(side="left")
+        transcription_controls = ttk.Frame(controls)
+        transcription_controls.pack(side="left", anchor="s")
         self.start_button = ttk.Button(transcription_controls, text="話者判別・文字起こしを開始", style="Accent.TButton", command=self.start)
         self.start_button.pack(side="left", fill="y")
         self.cancel_button = ttk.Button(transcription_controls, text="停止", command=self.cancel, state="disabled")
@@ -243,6 +245,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         from update_ui import open_update
         self.update_button = ttk.Button(footer, text="アプリを更新…", command=lambda: open_update(self))
         self.update_button.pack(side="right")
+        self.update_notice = tk.StringVar()
+        ttk.Label(footer, textvariable=self.update_notice, style="App.Sub.TLabel").pack(side="right", padx=(0, 12))
         r.update_idletasks()
         r.geometry(f"{width}x{height}+{max(0, (r.winfo_screenwidth() - width) // 2)}+{max(0, (r.winfo_screenheight() - height) // 3)}")
         self.window_settings.attach(r, "main")
@@ -821,7 +825,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             "YouTube側のログイン・アクセス制限により取得できない動画もあります。\n"
             "設定・話者・学習音声・辞書・結果は、アプリ内のUserDataフォルダーに自動保存します。\n"
             "別PCへはアプリのフォルダーごとコピーし、start.cmdから起動してください。\n"
-            "更新時もUserData・.python・.venv・modelsを残してください。")
+            "起動後に最新版を自動で確認し、更新があれば画面右下にお知らせします。\n"
+            "「更新内容を見る…」から内容を確認し、「更新して再起動」でデータを引き継いで更新できます。")
 
     def close(self):
         updater = getattr(self, 'update_dialog', None)

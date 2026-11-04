@@ -8,6 +8,75 @@ from tkinter import messagebox, ttk
 from app_update import check_latest, current_version, prepare_update
 
 
+class StartupUpdateCheck:
+    """Check once after startup; workers never access Tk or install anything."""
+    def __init__(self, app, installation):
+        self.app, self.installation = app, installation
+        self.events = queue.Queue()
+        self.closed = self.started = False
+        self.generation = 0
+        self.poll_timer = None
+        self.start_timer = app.root.after(1500, self.start)
+        app.root.bind('<Destroy>', self.close, add='+')
+
+    def start(self):
+        self.start_timer = None
+        if self.closed or self.started:
+            return
+        self.started = True
+        generation, events, installation = self.generation, self.events, self.installation
+
+        def worker():
+            try:
+                result = check_latest(installation)
+            except Exception:
+                # Offline use stays quiet. The manual dialog explains errors on demand.
+                result = None
+            events.put((generation, result))
+
+        threading.Thread(target=worker, daemon=True, name='startup-update-check').start()
+        self.poll_timer = self.app.root.after(100, self.poll)
+
+    def poll(self):
+        self.poll_timer = None
+        if self.closed:
+            return
+        try:
+            generation, result = self.events.get_nowait()
+        except queue.Empty:
+            self.poll_timer = self.app.root.after(100, self.poll)
+            return
+        if generation == self.generation and result is not None:
+            self.show_release(result)
+
+    def show_release(self, release):
+        if self.closed:
+            return
+        available = bool(release['changes'])
+        self.app.update_notice.set('新しいバージョンがあります。' if available else '')
+        self.app.update_button.configure(text='更新内容を見る…' if available else 'アプリを更新…',
+                                         style='Accent.TButton' if available else 'TButton')
+
+    def manual_check_started(self):
+        # A newer manual result must not be overwritten by the slower startup request.
+        self.started = True
+        self.generation += 1
+        for name in ('start_timer', 'poll_timer'):
+            timer = getattr(self, name)
+            if timer is not None:
+                try:
+                    self.app.root.after_cancel(timer)
+                except tk.TclError:
+                    pass
+                setattr(self, name, None)
+
+    def close(self, event=None):
+        if event is not None and event.widget is not self.app.root:
+            return
+        self.closed = True
+        self.manual_check_started()
+
+
 class UpdateDialog(tk.Toplevel):
     def __init__(self, app):
         from engine import ROOT
@@ -70,6 +139,9 @@ class UpdateDialog(tk.Toplevel):
     def check(self):
         if self.busy:
             return
+        checker = getattr(self.app, 'update_checker', None)
+        if checker:
+            checker.manual_check_started()
         self.release = None
         self.detail.set('最新版を確認しています…')
         self.status.set('GitHubに接続しています。')
@@ -99,6 +171,9 @@ class UpdateDialog(tk.Toplevel):
                 self.detail.set('更新を完了できませんでした。アプリと保存データは変更していません。')
             elif kind == 'checked':
                 self.release = value
+                checker = getattr(self.app, 'update_checker', None)
+                if checker:
+                    checker.show_release(value)
                 try:
                     date = datetime.fromisoformat(value['date'].replace('Z', '+00:00')).astimezone().strftime('%Y/%m/%d %H:%M')
                 except (ValueError, TypeError):
