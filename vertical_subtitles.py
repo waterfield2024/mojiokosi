@@ -1,4 +1,5 @@
 """Shared vertical Japanese layout for the live overlay and burned-in video."""
+from platform_support import IS_MAC
 from functools import lru_cache
 import json
 import math
@@ -53,6 +54,10 @@ def save_direction(value):
 @lru_cache(maxsize=24)
 def font_at(size):
     from PIL import ImageFont
+    if IS_MAC:
+        for path in (Path('/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc'), Path('/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc'), Path('/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc')):
+            if path.is_file(): return ImageFont.truetype(str(path), max(8, int(size)))
+        raise RuntimeError('Macの日本語フォントが見つかりません。')
     fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     for name in ("meiryob.ttc", "YuGothB.ttc", "msgothic.ttc"):
         if (fonts / name).is_file():

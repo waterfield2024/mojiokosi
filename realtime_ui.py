@@ -1,5 +1,6 @@
 """Desktop controls for live loopback captions."""
 from __future__ import annotations
+from platform_support import python_executable, IS_MAC
 import json
 from pathlib import Path
 import subprocess
@@ -71,7 +72,7 @@ class RealtimeControls:
         self.live_context = tk.BooleanVar(value=processing["context_correct"])
         self.live_correct = tk.BooleanVar(value=processing["live_correct"])
         self.live_organize = tk.BooleanVar(value=processing['live_organize'])
-        self.live_noise = tk.BooleanVar(value=processing['live_noise'])
+        self.live_noise = tk.BooleanVar(value=processing['live_noise'] and not IS_MAC)
         self.live_previous_text = tk.BooleanVar(value=processing['live_previous_text'])
         self.live_sensitivity = tk.StringVar(value=next(label for label, key in SPEECH_LABELS.items()
                                                        if key == processing['speech_sensitivity']))
@@ -266,14 +267,17 @@ class RealtimeControls:
                 canvas.yview_scroll(-int(event.delta/120), 'units')
         win.bind('<MouseWheel>', scroll_settings, add='+')
         ttk.Label(frame, text="動画を再生しながら、字幕を重ねて表示", font=("Yu Gothic UI", 16, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="選んだスピーカー／ヘッドホンの音声を取り込みます。マイクは使いません。").pack(anchor="w", pady=(4, 12))
-        ttk.Label(frame, text="動画の音声を再生している出力先").pack(anchor="w")
+        ttk.Label(frame, text=("BlackHole 2chを選び、Macの音声出力を複数出力装置にします。マイクは使いません。" if IS_MAC else "選んだスピーカー／ヘッドホンの音声を取り込みます。マイクは使いません。")).pack(anchor="w", pady=(4, 12))
+        ttk.Label(frame, text=("取り込む音声（BlackHole）" if IS_MAC else "動画の音声を再生している出力先")).pack(anchor="w")
         row = ttk.Frame(frame); row.pack(fill="x", pady=(4, 12))
         self.live_devices_combo = ttk.Combobox(row, textvariable=self.live_device_name, state="readonly")
         self.live_devices_combo.pack(side="left", fill="x", expand=True)
         self.live_devices_combo.bind("<<ComboboxSelected>>", self.choose_live_audio_device)
         self.live_refresh = ttk.Button(row, text="一覧を更新", command=self.refresh_live_devices)
         self.live_refresh.pack(side="left", padx=(8, 0))
+        if IS_MAC:
+            from platform_support import open_path
+            ttk.Button(frame, text='Macの音声設定手順を開く', command=lambda: open_path(ROOT/'docs/Mac.md')).pack(anchor='w', pady=(0, 8))
         recording = ttk.Frame(frame); recording.pack(fill="x", pady=(0, 4))
         ttk.Label(recording, text="保存する内容").pack(side="left", padx=(0, 8))
         self.live_record_buttons = []
@@ -330,6 +334,7 @@ class RealtimeControls:
         noise_row.pack(fill='x', pady=(0, 3))
         self.live_noise_check = ttk.Checkbutton(noise_row, text='Nemotronでノイズ除去（認識用のみ）', variable=self.live_noise)
         self.live_noise_check.pack(side='left')
+        if IS_MAC: self.live_noise_check.configure(state='disabled', text='Nemotronノイズ除去（NVIDIA専用・Mac非対応）')
         ttk.Label(noise_row, text='元の録音を保持／録音中も切り替え可', style='Sub.TLabel').pack(side='left', padx=8)
         noise_hint = ttk.Label(frame, textvariable=self.live_noise_message, style='Sub.TLabel', wraplength=680)
         noise_hint.pack(anchor='w', fill='x', pady=(0, 6))
@@ -517,7 +522,7 @@ class RealtimeControls:
         self.live_device_notice = "音声出力を確認しています…"
         self.show_live_preload_status()
         self.update_live_controls()
-        python = Path(sys.executable).with_name("python.exe")
+        python = python_executable()
         def read():
             try:
                 result = subprocess.run([str(python), "-X", "utf8", str(ROOT / "realtime.py"), "--list-devices"],
@@ -924,6 +929,8 @@ class RealtimeControls:
                         self.live_device_notice = "前回の音声出力先が見つからないか、同名の候補が複数あります。接続して「一覧を更新」するか、出力先を選び直してください。"
                     else:
                         self.live_device_notice = "音声出力を取得できません。スピーカー／ヘッドホンを接続して「一覧を更新」してください。"
+                    if IS_MAC and not self.live_devices:
+                        self.live_device_notice = 'BlackHole 2chが見つかりません。「Macの音声設定手順を開く」を確認してから一覧を更新してください。'
                     if event.get("error"):self.live_device_notice += " " + str(event["error"])[:100]
                 self.update_live_controls()
                 self.show_live_preload_status()

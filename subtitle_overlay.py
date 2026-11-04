@@ -1,5 +1,6 @@
 """Movable two-line captions above other Windows applications."""
 from __future__ import annotations
+from platform_support import IS_MAC
 from collections import deque
 import ctypes
 import math
@@ -34,7 +35,12 @@ class SubtitleOverlay:
         self.window.overrideredirect(True)
         self.window.configure(bg=self.KEY)
         self.window.attributes("-topmost", True)
-        self.window.attributes("-transparentcolor", self.KEY)
+        if IS_MAC:
+            self.KEY = "systemTransparent"
+            self.window.configure(bg=self.KEY)
+            self.window.attributes("-transparent", True)
+        else:
+            self.window.attributes("-transparentcolor", self.KEY)
         self.canvas = tk.Canvas(self.window, bg=self.KEY, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.font = tkfont.Font(family="Yu Gothic UI", size=font_size, weight="bold")
@@ -78,6 +84,12 @@ class SubtitleOverlay:
         if locked:self.finish_drag()
         self.locked = bool(locked)
         self.window.update_idletasks()
+        if IS_MAC:
+            from mac_native import lock_overlay
+            lock_overlay(self.window, self.locked)
+            self.canvas.configure(cursor="" if locked else "fleur")
+            self.draw()
+            return
         user = ctypes.windll.user32
         user.GetParent.argtypes = [ctypes.c_void_p]
         user.GetParent.restype = ctypes.c_void_p
@@ -134,6 +146,10 @@ class SubtitleOverlay:
         SetWindowPos avoids confusing those offsets with negative desktop pixels.
         """
         self.window.update_idletasks()
+        if IS_MAC:
+            from mac_native import move_window
+            move_window(self.window, x, y)
+            return
         user = ctypes.windll.user32
         user.GetParent.argtypes = [ctypes.c_void_p];user.GetParent.restype = ctypes.c_void_p
         hwnd = user.GetParent(self.window.winfo_id()) or self.window.winfo_id()

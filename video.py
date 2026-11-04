@@ -1,5 +1,7 @@
 """Burn edited captions into an MP4. Runs in the existing cancellable worker."""
 from __future__ import annotations
+from platform_support import IS_MAC
+from platform_support import tool_path
 
 import json
 import math
@@ -18,7 +20,7 @@ NORMALIZE = "scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1"
 
 
 def inspect_video(media):
-    command = [str(TOOLS / "ffmpeg.exe"), "-nostdin", "-hide_banner",
+    command = [str(tool_path('ffmpeg')), "-nostdin", "-hide_banner",
                "-i", str(media), "-map", "0:V:0", "-vf", NORMALIZE,
                "-frames:v", "1", "-c:v", "png", "-f", "image2pipe", "pipe:1"]
     result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -37,6 +39,10 @@ def inspect_video(media):
 
 def caption_font(size):
     from PIL import ImageFont
+    if IS_MAC:
+        from vertical_subtitles import font_at
+        font = font_at(size)
+        return font, font.getname()[0]
     fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     for filename, family in (("meiryob.ttc", "Meiryo"), ("YuGothB.ttc", "Yu Gothic"),
                              ("msgothic.ttc", "MS Gothic")):
@@ -269,7 +275,7 @@ def run_render_job(request, job):
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = partial_output(output, job)
     command = [
-        str(TOOLS / "ffmpeg.exe"), "-nostdin", "-hide_banner", "-nostats", "-n",
+        str(tool_path('ffmpeg')), "-nostdin", "-hide_banner", "-nostats", "-n",
         "-i", str(source), *filters,
         "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
         "-threads", str(min(8, os.cpu_count() or 4)),

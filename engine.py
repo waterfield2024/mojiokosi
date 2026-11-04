@@ -1,5 +1,6 @@
 """Local Whisper transcription worker. Network is used only for YouTube/model downloads."""
 from __future__ import annotations
+from platform_support import tool_path
 
 import argparse
 import json
@@ -134,14 +135,14 @@ def get_youtube_media(url, job, video=False):
         "noplaylist": True, "quiet": True, "noprogress": True, "no_warnings": False,
         "socket_timeout": 30, "retries": 3, "fragment_retries": 3,
         "progress_hooks": [progress], "match_filter": reject_live,
-        "js_runtimes": {"node": {"path": str(TOOLS / "node.exe")}},
+        "js_runtimes": {"node": {"path": str(tool_path('node'))}},
         "overwrites": False,
     }
     if video:
         opts.update({
             "format": "bv[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv[height<=1080]+ba/b[height<=1080]/b",
             "merge_output_format": "mkv",
-            "ffmpeg_location": str(TOOLS / "ffmpeg.exe"),
+            "ffmpeg_location": str(tool_path('ffmpeg')),
         })
     emit("status", text="YouTubeの動画情報を取得中…")
     try:
@@ -172,7 +173,7 @@ def get_youtube_audio(url, job):
 
 def convert_audio(media, wav):
     proc = subprocess.run(
-        [str(TOOLS / "ffmpeg.exe"), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+        [str(tool_path('ffmpeg')), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
          "-i", str(media), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
     if proc.returncode:
@@ -188,7 +189,7 @@ def cache_audio(wav, folder):
     temporary = directory / (Path(wav).parent.name + ".partial.flac")
     try:
         proc = subprocess.run(
-            [str(TOOLS / "ffmpeg.exe"), "-nostdin", "-hide_banner", "-loglevel", "error", "-n",
+            [str(tool_path('ffmpeg')), "-nostdin", "-hide_banner", "-loglevel", "error", "-n",
              "-i", str(wav), "-c:a", "flac", str(temporary)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
         if proc.returncode:
@@ -336,7 +337,7 @@ def run_job(request_path):
         if not media.is_file():
             raise FileNotFoundError("音声・動画ファイルが見つかりません。")
         title = media.stem
-    ffmpeg = TOOLS / "ffmpeg.exe"
+    ffmpeg = tool_path('ffmpeg')
     if not ffmpeg.is_file():
         raise FileNotFoundError("音声変換ソフトが見つかりません。アプリの .tools フォルダーを確認してください。")
     emit("status", text="音声を文字起こし用に変換中…")

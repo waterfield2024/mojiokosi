@@ -1,4 +1,5 @@
 """Audio review window for a registered person's learning evidence."""
+from platform_support import tool_path
 from pathlib import Path
 import queue
 import tempfile
@@ -7,7 +8,7 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 import wave
-import winsound
+from platform_support import play_wav
 from engine import TOOLS, timestamp
 from speaker_review import preview_pcm
 from ui_theme import TranscriptTree
@@ -235,7 +236,7 @@ class VoiceReviewWindow:
         store, target, events = self.app.speaker_memory, self.target, self.events
         def work():
             try:
-                pcm, revision = preview_pcm(store, target, row["key"], TOOLS / "ffmpeg.exe")
+                pcm, revision = preview_pcm(store, target, row["key"], tool_path('ffmpeg'))
                 events.put((generation, row["key"], pcm, revision, None))
             except Exception as exc:
                 events.put((generation, row["key"], None, None, str(exc)))
@@ -265,7 +266,7 @@ class VoiceReviewWindow:
                     with wave.open(str(path), "wb") as writer:
                         writer.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
                         writer.writeframes(pcm)
-                    winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+                    self.audio_process = play_wav(path, getattr(self, "audio_process", None))
                     self.status.set(f"再生中（{len(pcm)/32000:.1f}秒）")
                     self.timer = self.window.after(round(len(pcm)/32)+150, self.finish_playback)
                 except Exception as exc:
@@ -317,7 +318,7 @@ class VoiceReviewWindow:
             self.window.after_cancel(self.timer)
             self.timer = None
         if self.playback:
-            winsound.PlaySound(None, 0)
+            self.audio_process = play_wav(None, getattr(self, "audio_process", None))
             self.playback.cleanup()
             self.playback = None
             self.status.set("再生を停止しました。")

@@ -1,5 +1,6 @@
 """Japanese desktop UI for local Whisper, with editable timestamped segments."""
 from __future__ import annotations
+from platform_support import IS_MAC, open_path
 
 import ctypes
 import json
@@ -52,6 +53,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
     def __init__(self, root):
         from user_data import initialize
         initialize()
+        if IS_MAC: os.environ['WHISPER_GUI_PID'] = str(os.getpid())
         self.root = root
         self.proc = None
         self.operation = None
@@ -91,7 +93,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
     def build(self):
         r = self.root
         r.title("Whisper — リアルタイム字幕対応版")
-        if (ROOT / "whisper.ico").is_file():
+        if os.name == "nt" and (ROOT / "whisper.ico").is_file():
             r.iconbitmap(str(ROOT / "whisper.ico"))
         width = min(1180, r.winfo_screenwidth() - 80)
         height = min(920, r.winfo_screenheight() - 100)
@@ -526,7 +528,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
     def play_video(self):
         if self.video_path and self.video_path.is_file():
             try:
-                os.startfile(str(self.video_path))
+                open_path(self.video_path)
             except OSError as exc:
                 messagebox.showerror("動画を開けません", str(exc))
 
@@ -739,7 +741,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
     def open_folder(self):
         folder = self.result_path.parent if self.result_path else RESULTS
         folder.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(folder))
+        open_path(folder)
 
     def load_saved(self):
         self.commit()
@@ -919,8 +921,7 @@ def main():
             subprocess.Popen([str(python if python.is_file() else Path(sys.executable)), '-X', 'utf8', str(ROOT / 'app.py')],
                              cwd=ROOT, env=os.environ.copy(), creationflags=NO_WINDOW)
         except OSError:
-            ctypes.windll.user32.MessageBoxW(0, 'データは復元済みです。自動で再起動できなかったため、デスクトップからWhisperを起動してください。',
-                                           '復元しました', 0x40)
+            messagebox.showerror('復元しました', 'データは復元済みです。start.command（Windowsはstart.cmd）から起動してください。')
 
 
 if __name__ == "__main__":

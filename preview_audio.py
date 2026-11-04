@@ -3,6 +3,7 @@
 The handle affects only this preview. No device/global volume is changed.
 API contracts: learn.microsoft.com/windows/win32/api/mmeapi/
 """
+from platform_support import IS_MAC
 import ctypes as C
 from collections import deque
 import os
@@ -82,3 +83,7 @@ class WaveOutput:
             for header,buffer in self.pending:
                 self.api.waveOutUnprepareHeader(self.handle,C.byref(header),C.sizeof(header))
             self.pending.clear();self.api.waveOutClose(self.handle);self.handle=None
+
+
+if IS_MAC:
+    from mac_audio import WaveOutput

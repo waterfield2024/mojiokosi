@@ -1,4 +1,5 @@
 """Small, validated overlay preferences and placement in Tk's desktop coordinates."""
+from platform_support import IS_MAC
 import ctypes
 from ctypes import wintypes as w
 
@@ -36,6 +37,9 @@ def preferences(data=None):
 
 def display_areas(root):
     """Use the GUI thread's DPI context, not the recorder's physical-pixel context."""
+    if IS_MAC:
+        from mac_native import displays
+        return displays()
     user = ctypes.windll.user32
     class Info(ctypes.Structure):
         _fields_ = [("size", w.DWORD), ("rect", w.RECT), ("work", w.RECT),

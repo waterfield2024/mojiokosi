@@ -1,4 +1,5 @@
 """One registered Windows shortcut; no keyboard hook or text input capture."""
+from platform_support import IS_MAC
 import ctypes
 from ctypes import wintypes as w
 import threading
@@ -68,3 +69,8 @@ class GlobalHotkey:
             self.user.PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0)
         if threading.current_thread() is not self.thread:
             self.thread.join(timeout=1)
+
+
+if IS_MAC:
+    from mac_native import GlobalHotkey
+    LABEL = 'Control+Option+F9'

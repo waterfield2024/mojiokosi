@@ -1,4 +1,5 @@
 """Prepare a reusable black background with the saved audio, without recording a screen."""
+from platform_support import tool_path
 import hashlib
 import json
 import os
@@ -39,7 +40,7 @@ def prepare_audio_video(result, folder):
     try:
         # FLAC keeps the intermediate audio lossless; the final MP4 uses AAC.
         # This subprocess belongs to the existing preview/render process job.
-        command = [str(TOOLS / "ffmpeg.exe"), "-nostdin", "-hide_banner", "-loglevel", "error", "-n",
+        command = [str(tool_path('ffmpeg')), "-nostdin", "-hide_banner", "-loglevel", "error", "-n",
                    "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=25", "-i", str(audio),
                    "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-preset", "ultrafast",
                    "-crf", "28", "-pix_fmt", "yuv420p", "-threads", "2", "-c:a", "flac",

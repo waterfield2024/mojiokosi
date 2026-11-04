@@ -1,4 +1,5 @@
 """Bounded continuous AV decoding; audio-device position is the master clock."""
+from platform_support import tool_path
 import base64
 import queue
 import subprocess
@@ -10,7 +11,7 @@ from preview_audio import WaveOutput
 
 
 def has_audio(source):
-    probe=subprocess.run([str(TOOLS/"ffmpeg.exe"),"-nostdin","-hide_banner","-loglevel","error",
+    probe=subprocess.run([str(tool_path('ffmpeg')),"-nostdin","-hide_banner","-loglevel","error",
         "-i",str(source),"-map","0:a:0","-t","0","-f","null","-"],capture_output=True,timeout=30,creationflags=NO_WINDOW)
     return probe.returncode==0
 
@@ -25,7 +26,7 @@ class Playback:
         self.silent_elapsed=0.;self.anchor=None;self.last_report=0.;self.created=time.monotonic()
         try:
             if audio:self.audio=WaveOutput()
-            common=[str(TOOLS/"ffmpeg.exe"),"-nostdin","-hide_banner","-loglevel","error","-ss",str(start),"-i",str(source)]
+            common=[str(tool_path('ffmpeg')),"-nostdin","-hide_banner","-loglevel","error","-ss",str(start),"-i",str(source)]
             video=self.spawn(common+["-map","0:V:0","-an","-vf",NORMALIZE+
                 ",scale=w='min(960,iw)':h='min(540,ih)':force_original_aspect_ratio=decrease,fps=20:start_time=0",
                 "-threads","2","-c:v","mjpeg","-q:v","5","-f","image2pipe","pipe:1"])

@@ -1,4 +1,5 @@
 """Resident Windows Haas client, shared by file and chunked live recognition."""
+from platform_support import python_executable, IS_MAC
 import base64
 import json
 from pathlib import Path
@@ -33,7 +34,7 @@ class HaasRecognizer:
             status('Haas-ja-v1.0を読み込み中… CPU（Windows用ONNX変換版）')
             from live_process import ProcessJob
             self.log = (self.job / 'haas-cpu.log').open('ab')
-            python = Path(sys.executable).with_name('python.exe')
+            python = python_executable()
             self.proc = subprocess.Popen([str(python), '-X', 'utf8', '-u', str(ROOT / 'haas_worker.py'), str(self.model)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
                 text=True, encoding='utf-8', errors='replace', creationflags=NO_WINDOW)

@@ -27,9 +27,12 @@ def serve(folder,device):
     handle_native_errors()
     os.environ['HF_HUB_OFFLINE']='1';os.environ['HF_HUB_DISABLE_TELEMETRY']='1'
     os.environ['HF_HUB_DISABLE_PROGRESS_BARS']='1';os.environ['TOKENIZERS_PARALLELISM']='false'
+    if device == 'mps': os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
     import numpy as np
     import torch
     from transformers import WhisperForConditionalGeneration,WhisperProcessor
+    if device == 'mps' and not torch.backends.mps.is_available():
+        raise RuntimeError('Metalを利用できません。CPUで再試行します。')
     torch.set_num_threads(min(8,max(1,(os.cpu_count() or 4)//2)))
     if device=='cuda' and not torch.cuda.is_available():raise RuntimeError('CUDAを利用できません。')
     dtype=torch.float16 if device=='cuda' else torch.float32

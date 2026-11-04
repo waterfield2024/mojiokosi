@@ -1,4 +1,5 @@
 """Portable, verified backups of settings and explicitly learned local user data."""
+from platform_support import tool_path
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -155,7 +156,7 @@ def create_backup(destination, *, include_results=False, root=None, ffmpeg=None,
     if destination.is_relative_to(root): raise ValueError('バックアップは保存データフォルダーの外に保存してください。')
     if ffmpeg is None:
         from engine import TOOLS
-        ffmpeg = TOOLS / 'ffmpeg.exe'
+        ffmpeg = tool_path('ffmpeg')
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_name(destination.name + '.' + uuid.uuid4().hex + '.partial')
     with application_session(root), ud._locked(root):

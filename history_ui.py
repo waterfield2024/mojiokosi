@@ -1,4 +1,5 @@
 """Searchable chat-style transcript panel, independent of the minimized editor."""
+from platform_support import IS_MAC
 import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -290,6 +291,15 @@ class HistoryWindow(tk.Toplevel):
     def dock(self):
         from overlay_preferences import display_areas
         from window_settings import handle, native
+        if IS_MAC:
+            from mac_native import move_window
+            self.update_idletasks()
+            area = display_areas(self)[0]
+            left, top, right, bottom = area['rect']
+            width, height = min(self.winfo_width(), right-left-16), min(self.winfo_height(), bottom-top-40)
+            self.geometry(f'{width}x{height}')
+            move_window(self, left+8 if self.side.get() == '左端' else right-width-8, top+8)
+            return
         from ctypes import wintypes as w
         import ctypes
         self.update_idletasks()

@@ -15,6 +15,7 @@ def bundled_python(root):
 
 def repair_environment(root=None):
     root = Path(root or Path(__file__).resolve().parent).resolve()
+    if sys.platform == "darwin": return False
     base = bundled_python(root)
     environment = root / '.venv'
     if base is None or not environment.is_dir(): return False

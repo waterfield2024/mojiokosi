@@ -1,4 +1,6 @@
 """Windows monitor selection and an owned, audio-clocked screen recorder."""
+from platform_support import python_executable, IS_MAC
+from platform_support import tool_path
 import ctypes
 from ctypes import wintypes as w
 import json
@@ -17,6 +19,9 @@ FPS = 15
 
 
 def monitors():
+    if IS_MAC:
+        from mac_native import monitors as mac_monitors
+        return mac_monitors()
     user = ctypes.windll.user32
     class MonitorInfo(ctypes.Structure):
         _fields_ = [('size', w.DWORD), ('rect', w.RECT), ('work', w.RECT), ('flags', w.DWORD), ('device', w.WCHAR * 32)]
@@ -61,6 +66,7 @@ def validate_target(selected):
 
 def exclude_window(window):
     """Keep our live subtitle overlay out of the underlying recording."""
+    if IS_MAC: return True  # Recorder excludes the GUI process through ScreenCaptureKit.
     window.update_idletasks()
     user = ctypes.windll.user32
     user.GetParent.argtypes = [ctypes.c_void_p]; user.GetParent.restype = ctypes.c_void_p
@@ -92,17 +98,17 @@ class ScreenRecorder:
         self.lock = threading.Lock(); self.closed = threading.Event(); self.monitor = None
         self.target_closed = threading.Event()
         self.log = (self.folder / 'recorder.log').open('w', encoding='utf-8')
-        python = Path(sys.executable).with_name('python.exe')
+        python = python_executable()
         self.proc = subprocess.Popen([str(python), '-X', 'utf8', '-u', str(ROOT/'screen_capture_worker.py')],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, encoding='utf-8', creationflags=NO_WINDOW)
         self.owner = ProcessJob(self.proc)
-        if not self.owner.handle:
+        if not IS_MAC and not self.owner.handle:
             self.proc.terminate(); self.proc.wait(timeout=10); self.log.close()
             raise RuntimeError('画面録画を安全に起動できませんでした。アプリを起動し直してください。')
         threading.Thread(target=self.read, daemon=True).start()
         try:
             self.send({'op':'prepare', 'rect':selected['rect'], 'device':selected.get('device'),
-                       'window':selected if selected.get('kind') == 'window' else None, 'folder':str(self.folder), 'fps':FPS})
+                       'window':selected if selected.get('kind') == 'window' else None, 'folder':str(self.folder), 'fps':FPS, 'exclude_pid':int(os.environ.get('WHISPER_GUI_PID', '0'))})
             deadline = time.monotonic()+20
             while not self.ready.wait(.05):
                 if self.done.is_set():raise RuntimeError(self.error or '画面録画を準備できませんでした。')
@@ -163,7 +169,7 @@ class ScreenRecorder:
             raise RuntimeError(self.error or '画面録画を保存できませんでした。途中までの録音は残っています。')
         target = self.folder/'録画.mp4'; temporary = self.folder/'録画.partial.mp4'
         self.status('録画を停止しました。映像と音声をMP4に保存しています…')
-        command=[str(TOOLS/'ffmpeg.exe'), '-nostdin','-hide_banner','-loglevel','error','-n',
+        command=[str(tool_path('ffmpeg')), '-nostdin','-hide_banner','-loglevel','error','-n',
                  '-i',str(self.folder/'screen.mkv'),'-i',str(audio),'-map','0:v:0','-map','1:a:0',
                  '-c:v','copy','-c:a','aac','-b:a','160k','-t',str(duration),'-movflags','+faststart',
                  '-map_metadata','-1',str(temporary)]

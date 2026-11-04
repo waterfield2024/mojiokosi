@@ -1,5 +1,7 @@
 """UI actions for persistent local voice names."""
 from __future__ import annotations
+from platform_support import python_executable, IS_MAC
+from platform_support import tool_path
 import json
 import os
 from pathlib import Path
@@ -165,8 +167,8 @@ class SpeakerMemoryControls:
         job.mkdir(parents=True, exist_ok=True)
         request = job / "request.json"
         write_json(request, {"source": str(source), "ranges": ranges,
-                             "model": str(ROOT / "models/speakers/embedding.onnx"), "ffmpeg": str(TOOLS / "ffmpeg.exe")})
-        python = Path(sys.executable).with_name("python.exe")
+                             "model": str(ROOT / "models/speakers/embedding.onnx"), "ffmpeg": str(tool_path('ffmpeg'))})
+        python = python_executable()
         def work():
             event = {"kind": "speaker_memory_sample", "key": key, "token": intent["token"]}
             try:
@@ -325,8 +327,8 @@ class SpeakerMemoryControls:
         job.mkdir(parents=True, exist_ok=True)
         request = job / "request.json"
         write_json(request, {**snapshot, "job": str(job), "model": str(ROOT / "models/speakers/embedding.onnx"),
-                             "ffmpeg": str(TOOLS / "ffmpeg.exe")})
-        python = Path(sys.executable).with_name("python.exe")
+                             "ffmpeg": str(tool_path('ffmpeg'))})
+        python = python_executable()
         worker_lock, pending, events = self.correction_worker_lock, self.correction_pending, self.events
         def work():
             event = {"kind": "voice_correction_sample", "key": key, "token": intent["token"]}

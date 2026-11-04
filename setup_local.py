@@ -100,7 +100,8 @@ def write_state(state, root=ROOT):
 
 @contextmanager
 def setup_lock(root=ROOT):
-    import msvcrt
+    if os.name == 'nt': import msvcrt
+    else: import fcntl
     path = root / '.cache/setup.lock'
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a+b') as stream:
@@ -109,14 +110,16 @@ def setup_lock(root=ROOT):
             stream.flush()
         stream.seek(0)
         try:
-            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            if os.name == 'nt': msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else: fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise RuntimeError('別のセットアップが実行中です。その画面が完了するまでお待ちください。') from exc
         try:
             yield
         finally:
             stream.seek(0)
-            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            if os.name == 'nt': msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else: fcntl.flock(stream, fcntl.LOCK_UN)
 
 
 def sha256(path):
@@ -302,6 +305,9 @@ def install(args):
 
 
 def main(argv=None):
+    if sys.platform == 'darwin':
+        from setup_mac import main as mac_setup
+        return mac_setup(argv)
     parser = argparse.ArgumentParser(description='Whisper Local: Windows Python setup')
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--model', choices=['base', 'small', 'turbo', 'granite', 'haas', 'none'])

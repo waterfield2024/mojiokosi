@@ -1,4 +1,5 @@
 """Owned, cancellable video preparation and frame decoding for the preview dialog."""
+from platform_support import tool_path
 import json
 from pathlib import Path
 import subprocess
@@ -43,7 +44,7 @@ def main():
                         emit("play_error",epoch=player.epoch,text=str(exc));player.close();player=None
                 elif op=="frame":
                     seconds=max(0.,float(request["seconds"]));target=Path(request["frame"]);target.unlink(missing_ok=True)
-                    command=[str(TOOLS/"ffmpeg.exe"),"-nostdin","-hide_banner","-loglevel","error","-y",
+                    command=[str(tool_path('ffmpeg')),"-nostdin","-hide_banner","-loglevel","error","-y",
                         "-ss",str(seconds),"-i",str(source),"-map","0:V:0",
                         "-vf",NORMALIZE+",scale=w='min(1280,iw)':h='min(900,ih)':force_original_aspect_ratio=decrease",
                         "-frames:v","1",str(target)]

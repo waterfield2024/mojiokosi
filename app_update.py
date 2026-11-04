@@ -28,7 +28,7 @@ MAX_TOTAL = 80 * 1024 * 1024
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 SOURCE_DIRS = {'docs', 'licenses', 'tests', 'reuse_model', '.github'}
 ROOT_FILES = {'.gitignore', '.gitattributes', 'LICENSE', 'README.md',
-              'THIRD_PARTY_NOTICES.md', 'requirements.txt', 'requirements-lock.txt', 'whisper.ico'}
+              'THIRD_PARTY_NOTICES.md', 'requirements.txt', 'requirements-lock.txt', 'requirements-macos.txt', 'whisper.ico'}
 REQUIRED = {'app.py', 'app_update.py', 'update_ui.py', 'run.py', 'setup_local.py',
             'portable_runtime.py', 'bootstrap.cmd', 'start.cmd', 'requirements-lock.txt'}
 
@@ -46,7 +46,7 @@ def source_path(name):
             raise ValueError(f'Windowsで使えない更新ファイル名です：{name}')
     path = PurePosixPath(name)
     if len(parts) == 1:
-        allowed = (name in ROOT_FILES or path.suffix in ('.py', '.cmd')
+        allowed = (name in ROOT_FILES or path.suffix in ('.py', '.cmd', '.command')
                    or name.endswith('_manifest.json'))
     else:
         allowed = (parts[0] in SOURCE_DIRS and all(not p.startswith('.') for p in parts[1:])
@@ -120,6 +120,8 @@ def atomic_copy(source, target):
             shutil.copyfileobj(src, dst)
             dst.flush()
             os.fsync(dst.fileno())
+        if os.name != 'nt' and target.suffix == '.command':
+            temp.chmod(0o755)
         os.replace(temp, target)
     finally:
         temp.unlink(missing_ok=True)
@@ -411,7 +413,7 @@ def launch_helper(root, job):
 
 
 def verify_installation(root, job, progress):
-    python = Path(root) / '.venv' / 'Scripts' / 'python.exe'
+    python = Path(root) / ('.venv-macos/bin/python' if sys.platform == 'darwin' else '.venv/Scripts/python.exe')
     progress('必要なライブラリを確認しています。追加の準備には数分かかる場合があります…')
     with (job / 'setup.log').open('w', encoding='utf-8') as log:
         env = dict(os.environ, PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
@@ -453,7 +455,7 @@ def helper_main(root, job):
 
     def restart():
         try:
-            python = root / '.venv' / 'Scripts' / 'pythonw.exe'
+            python = root / ('.venv-macos/bin/python' if sys.platform == 'darwin' else '.venv/Scripts/pythonw.exe')
             subprocess.Popen([str(python), '-X', 'utf8', str(root / 'app.py')], cwd=root, creationflags=NO_WINDOW)
             window.destroy()
         except OSError as exc:

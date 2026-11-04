@@ -14,6 +14,7 @@ from asr import ROOT, NO_WINDOW
 class ProcessJob:
     """Kill the resident worker and its children if the GUI exits unexpectedly."""
     def __init__(self, process):
+        self.process = process
         self.handle = None
         self.lock = threading.Lock()
         if os.name != 'nt':
@@ -43,6 +44,12 @@ class ProcessJob:
                 kernel.CloseHandle(handle)
 
     def close(self):
+        if os.name != 'nt':
+            if self.process.poll() is None:
+                self.process.terminate()
+                try: self.process.wait(timeout=3)
+                except subprocess.TimeoutExpired: self.process.kill(); self.process.wait(timeout=3)
+            return
         with self.lock:
             if self.handle:
                 self.kernel.CloseHandle(self.handle)

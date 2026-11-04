@@ -6,9 +6,11 @@ from pathlib import Path
 import socket
 import subprocess
 import time
+import signal
+from platform_support import IS_MAC, tool_path
 
 ROOT = Path(__file__).resolve().parent
-EXECUTABLE = ROOT / ".tools" / "ollama" / "ollama.exe"
+EXECUTABLE = tool_path('ollama') if IS_MAC else ROOT / ".tools" / "ollama" / "ollama.exe"
 _process = None
 _log = None
 _url = None
@@ -20,9 +22,17 @@ def stop():
     global _process, _log, _url
     if _process is not None:
         if _process.poll() is None:
-            subprocess.run(["taskkill", "/PID", str(_process.pid), "/T", "/F"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=15)
+            if IS_MAC:
+                try: os.killpg(_process.pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+                try: _process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(_process.pid, signal.SIGKILL)
+                    _process.wait(timeout=5)
+            else:
+                subprocess.run(["taskkill", "/PID", str(_process.pid), "/T", "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=15)
         _process = None
     if _log is not None:
         _log.close()
@@ -51,7 +61,7 @@ def start(compute, progress):
     try:
         _process = subprocess.Popen([str(EXECUTABLE), "serve"], cwd=EXECUTABLE.parent,
                                     stdout=_log, stderr=_log, env=env,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), start_new_session=IS_MAC)
     except OSError:
         stop()
         raise

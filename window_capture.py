@@ -1,4 +1,5 @@
 """Exact HWND selection and Windows Graphics Capture (never desktop cropping)."""
+from platform_support import IS_MAC
 import ctypes
 from ctypes import wintypes as w
 import os
@@ -27,6 +28,9 @@ def _api():
 
 
 def window_info(hwnd):
+    if IS_MAC:
+        from mac_native import window_info as mac_info
+        return mac_info(hwnd)
     user, kernel = _api()
     if not user.IsWindow(hwnd):return None
     pid = w.DWORD(); user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
@@ -58,6 +62,9 @@ def window_info(hwnd):
 
 
 def windows():
+    if IS_MAC:
+        from mac_native import windows as mac_windows
+        return mac_windows()
     user, _ = _api(); found = []
     callback_type = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
     user.EnumWindows.argtypes = [callback_type, w.LPARAM]

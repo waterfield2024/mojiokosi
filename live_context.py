@@ -182,7 +182,7 @@ class LiveProofreader:
 
     def close(self):
         if self.proc:
-            if self.job and self.job.handle:
+            if self.job and (self.job.handle or os.name != 'nt'):
                 self.job.close()
             elif self.proc.poll() is None:
                 subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],

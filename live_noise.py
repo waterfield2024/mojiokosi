@@ -1,4 +1,5 @@
 """Optional ASR-only enhancement. Recording and speaker analysis remain original."""
+from platform_support import IS_MAC
 import json
 from pathlib import Path
 import threading
@@ -27,6 +28,8 @@ class LiveNoiseReducer:
             if enabled != self.enabled or (compute is not None and compute != self.compute) or retry:
                 self.revision += 1
                 self.problem, self.slow = '', 0
+            if IS_MAC and enabled:
+                self.problem = 'NemotronはNVIDIA CUDA専用です。Macでは元の音声で認識します。'
             self.enabled = enabled
             if compute is not None:
                 self.compute = compute

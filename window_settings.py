@@ -1,4 +1,5 @@
 """Remember normal window bounds and maximization, independently of captions."""
+from platform_support import IS_MAC
 import ctypes
 from ctypes import wintypes as w
 import json
@@ -86,6 +87,12 @@ def placement(window):
 
 
 def snapshot(window, previous=None):
+    if IS_MAC:
+        if window.state() in {'withdrawn', 'iconic'} and previous: return previous
+        from overlay_preferences import closest_area
+        x, y, width, height = window.winfo_x(), window.winfo_y(), window.winfo_width(), window.winfo_height()
+        area = closest_area(x, y, width, height, display_areas(window))
+        return dict(x=x, y=y, size=[width, height], device=area['device'], rect=area['rect'], dpi=96, maximized=False)
     value = placement(window)
     # Hiding/minimizing must not replace the last visible state or normal bounds.
     if window.state() in {"withdrawn", "iconic"} and previous:
@@ -111,6 +118,13 @@ def fit(saved, areas, minimum, dpi):
 
 
 def restore(window, saved):
+    if IS_MAC:
+        from mac_native import move_window
+        x, y, width, height, area = fit(saved, display_areas(window), window.minsize(), 96)
+        window.geometry(f'{width}x{height}')
+        window.deiconify()
+        move_window(window, x, y)
+        return
     hwnd = handle(window)
     # Derive frame margins in the same DPI context as Tk; saved size includes them.
     outer = w.RECT();client = w.RECT()

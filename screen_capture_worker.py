@@ -1,4 +1,6 @@
 """Capture on a separate process; frame timestamps share the WASAPI recording epoch."""
+from platform_support import IS_MAC
+from platform_support import tool_path
 import ctypes
 import json
 import math
@@ -13,11 +15,14 @@ from engine import TOOLS, NO_WINDOW, emit
 
 
 def main():
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    if not IS_MAC: ctypes.windll.shcore.SetProcessDpiAwareness(2)
     request=json.loads(sys.stdin.readline())
     source=None
     try:
-        if request.get('window'):
+        if IS_MAC:
+            from mac_native import MacFrames
+            source = MacFrames(request.get('window') or request, request.get('exclude_pid'))
+        elif request.get('window'):
             from window_capture import WindowFrames
             source=WindowFrames(request['window'])
         record(request,source)
@@ -42,7 +47,7 @@ def record(request,source=None):
         return frame.tobytes()
     last=grab()
     monitor_device=request.get('device');checked_at=0
-    command=[str(TOOLS/'ffmpeg.exe'),'-nostdin','-hide_banner','-loglevel','error','-n',
+    command=[str(tool_path('ffmpeg')),'-nostdin','-hide_banner','-loglevel','error','-n',
              '-f','rawvideo','-pixel_format','rgb24','-video_size',f'{size[0]}x{size[1]}','-framerate',str(fps),
              '-i','pipe:0','-an','-c:v','libx264','-preset','ultrafast','-crf','23','-pix_fmt','yuv420p',
              '-threads','2','-g',str(fps*2),'-flush_packets','1','-cluster_time_limit','1000',str(folder/'screen.mkv')]
@@ -80,7 +85,7 @@ def record(request,source=None):
                 break
             if frozen:continue
             sample_time=time.monotonic()
-            if source and sample_time-checked_at>.2:
+            if source and request.get('window') and sample_time-checked_at>.2:
                 from window_capture import window_state
                 state='closed' if source.closed.is_set() else window_state(request['window'])
                 checked_at=sample_time

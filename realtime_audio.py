@@ -1,5 +1,6 @@
 """WASAPI loopback capture. Only the explicitly selected output device is opened."""
 from __future__ import annotations
+from platform_support import IS_MAC
 import audioop
 import queue
 import threading
@@ -13,6 +14,9 @@ from utterance_audio import utterance_limit, read_limit_control, MAX_SECONDS
 RATE = 16000
 
 def devices():
+    if IS_MAC:
+        from mac_audio import devices as mac_devices
+        return mac_devices()
     import pyaudiowpatch as pa
     with pa.PyAudio() as audio:
         try:
@@ -123,7 +127,10 @@ class LoopbackCapture:
                 chunker.activity.configure(self.profile.key)
 
     def run(self):
-        import pyaudiowpatch as pa
+        if IS_MAC:
+            import mac_audio as pa
+        else:
+            import pyaudiowpatch as pa
         raw = queue.Queue(maxsize=128)
         overflow = threading.Event()
         audio = stream = writer = chunker = activity = None

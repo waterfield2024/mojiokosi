@@ -1,11 +1,11 @@
 # Whisper Local
 
-YouTube・保存した動画・PCで再生中の音声を、日本語の字幕にするWindows向けPythonプログラムです。
+YouTube・保存した動画・PCで再生中の音声を、日本語の字幕にするWindows／Apple Silicon Mac向けPythonプログラムです。
 ソースをクローンし、自分のPCのPython環境で起動します。独自の起動用EXEは配布しません。
 
 ## 必要なもの
 
-- Windows 10 / 11、64ビット（x64）。macOS・Linux・Windows ARMは対象外です。
+- Windows 10 / 11、64ビット（x64）、または **Apple Silicon（Mシリーズ）・macOS 14以降**。Linux・Intel Mac・Windows ARMは対象外です。
 - 初回セットアップ用のインターネット接続と、目安として20 GB以上の空き容量。選ぶモデルにより追加容量が必要です。
 - NVIDIA GPUは任意です。対応するドライバーがあればCUDA、GPUがない場合はCPUで利用できます。CPUでのリアルタイム認識は処理が追いつかない場合があります。
 - Pythonは自動で準備します。Gitはクローンする場合だけ必要です。Gitがない場合はGitHubの「Code → Download ZIP」を展開して使えます。
@@ -17,6 +17,10 @@ Python本体もこのフォルダー内に準備します。`.python/runtime` �
 管理者権限、PATHの手動設定、PowerShellの実行ポリシー変更は不要です。
 
 ## 最初の1回
+
+**MシリーズのMacBookでは [Macのセットアップと使い方](docs/Mac.md) を参照し、`start.command` を使ってください。**
+以下の `start.cmd` の手順はWindows用です。MacはMetal（MPS）を優先し、利用できない処理はCPUへ切り替えます。
+Macの再生音声はBlackHole 2ch経由で取り込み、Nemotronノイズ除去はWindows＋NVIDIA専用です。
 
 **ダウンロードしたフォルダーの `start.cmd` をダブルクリックしてください。初回の準備からアプリの起動まで自動で進みます。**
 

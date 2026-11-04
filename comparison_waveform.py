@@ -1,4 +1,5 @@
 """Cancellable, bounded waveform envelopes for the visible part of a recording."""
+from platform_support import tool_path
 from collections import OrderedDict
 import math
 import subprocess
@@ -31,7 +32,7 @@ class WaveformLoader(ComparisonAudioPlayer):
         # Aggregate both channels: opposite-phase stereo must not look silent.
         block=max(1,math.ceil((end-start)*RATE/MAX_BINS));count=min(MAX_BINS,math.ceil((end-start)*RATE/block))
         lows=np.zeros(count,dtype=np.int16);highs=np.zeros(count,dtype=np.int16);frames=0
-        command=[str(TOOLS/"ffmpeg.exe"),"-nostdin","-hide_banner","-loglevel","error",
+        command=[str(tool_path('ffmpeg')),"-nostdin","-hide_banner","-loglevel","error",
                  "-ss",str(start),"-t",str(end-start),"-i",str(request.source),"-map","0:a:0","-vn",
                  "-ac","2","-ar",str(RATE),"-f","s16le","pipe:1"]
         threading.Thread(target=self._watch,args=(request,),daemon=True).start()

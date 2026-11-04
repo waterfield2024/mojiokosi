@@ -1,5 +1,6 @@
 """Portable whisper.cpp backends, with isolated GPU attempts and CPU fallback."""
 from __future__ import annotations
+from platform_support import IS_MAC
 import ctypes
 import hashlib
 import json
@@ -188,6 +189,8 @@ def run_backend(backend, wav, model, language, prompt, job, progress):
     return result
 
 def native_backends(compute="auto", executable="whisper-cli.exe"):
+    if compute not in COMPUTE_OPTIONS.values(): raise ValueError('処理方式が正しくありません。')
+    if IS_MAC: return []  # Never execute copied Windows backends.
     return [backend for backend in backend_order(compute)
             if (ROOT / '.tools' / ('whisper-' + backend) / executable).is_file()]
 

@@ -1,4 +1,6 @@
 """Resident Granite client shared by file transcription and live captions."""
+from platform_support import torch_backends
+from platform_support import python_executable, IS_MAC
 import base64
 import json
 from pathlib import Path
@@ -22,7 +24,7 @@ class GraniteRecognizer:
         self.proc = self.log = self.owner = None
         self.device = ""
         self.failures = []
-        self.backends = (["cuda"] if compute != "cpu" and nvidia_available() else [])+["cpu"]
+        self.backends = torch_backends(compute, nvidia_available)
         self.lock = threading.Lock()
         try:
             self.model = ensure_granite(models or ROOT/"models",status,stopped)
@@ -45,7 +47,7 @@ class GraniteRecognizer:
                 self.responses = queue.Queue()
                 responses = self.responses
                 self.log = (self.job/("granite-"+backend+".log")).open("ab")
-                python = Path(sys.executable).with_name("python.exe")
+                python = python_executable()
                 self.proc = subprocess.Popen([str(python),"-X","utf8","-u",str(ROOT/"granite_worker.py"),str(self.model),backend],
                     stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.log,text=True,encoding="utf-8",
                     errors="replace",creationflags=NO_WINDOW)

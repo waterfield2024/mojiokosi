@@ -1,4 +1,5 @@
 """Light/dark desktop themes, applied in place without rebuilding editor widgets."""
+from platform_support import IS_MAC
 import ctypes
 import json
 import os
@@ -7,7 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 
 FONT = "Yu Gothic UI"
-THEME_OPTIONS = {"Windowsに合わせる": "system", "ライト": "light", "ダーク": "dark"}
+THEME_OPTIONS = {("Macに合わせる" if IS_MAC else "Windowsに合わせる"): "system", "ライト": "light", "ダーク": "dark"}
 PALETTES = {
     "light": dict(page="#f3f5fa", surface="#ffffff", ink="#20283f", muted="#64748b",
                   line="#dfe5ef", accent="#5256d8", primary="#5256d8", on_primary="#ffffff",
@@ -59,6 +60,9 @@ def save_theme(mode):
 
 def windows_theme():
     """Read the current user's app mode, including Windows' custom color mode."""
+    if IS_MAC:
+        from AppKit import NSUserDefaults
+        return 'dark' if NSUserDefaults.standardUserDefaults().stringForKey_('AppleInterfaceStyle') == 'Dark' else 'light'
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,

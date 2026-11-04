@@ -1,5 +1,8 @@
 # Only source, manifests, documentation and tests belong in this repository.
 .venv/
+.venv-macos/
+.setup-macos.json
+.setup-macos.tmp
 .python/
 .tools/
 .cache/

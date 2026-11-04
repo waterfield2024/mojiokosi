@@ -1,4 +1,5 @@
 """Locate a difference in the shared recording and play bounded PCM buffers."""
+from platform_support import tool_path
 from dataclasses import dataclass,field
 import math
 from pathlib import Path
@@ -186,7 +187,7 @@ class ComparisonAudioPlayer:
             for start,end in request.intervals:
                 if request.cancel.is_set():break
                 playback_spans.append([start,end,0.])
-                command=[str(TOOLS/"ffmpeg.exe"),"-nostdin","-hide_banner","-loglevel","error",
+                command=[str(tool_path('ffmpeg')),"-nostdin","-hide_banner","-loglevel","error",
                          "-ss",str(start),"-t",str(end-start),"-i",str(request.source),"-map","0:a:0","-vn"]
                 # Limit the source interval BEFORE tempo conversion so slow
                 # playback includes the full ending. atempo preserves pitch.
