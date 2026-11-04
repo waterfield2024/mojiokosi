@@ -83,7 +83,7 @@ def undo_restore(*, expected_id, root=None, progress=lambda text: None):
                 raise OSError('復元前のデータが途中で変更されました。現在のデータは変更していません。')
             from data_backup import _validate
             old_marker = json.loads((stage / ud.MARKER).read_text('utf-8')) if (stage / ud.MARKER).is_file() else {}
-            previous = Path(old_marker.get('storage_root', str(root)))
+            previous = ud.stored_path(old_marker.get('storage_root', str(root)))
             if previous != root: ud.relocate_store(stage, previous, root)
             if old_marker.get('storage_device') not in (None, ud.storage_device()) and (stage / 'recording_settings.json').is_file():
                 recording = json.loads((stage / 'recording_settings.json').read_text('utf-8'))

@@ -19,7 +19,7 @@ ZIPで取得した場合も、展開先にTerminalで移動して `bash start.co
 Finderで実行権限がないと言われた場合は `chmod +x start.command setup.command` を一度実行してください。
 Rosetta経由では動かさず、Terminalの「Rosettaを使用して開く」はオフにします。
 
-スクリプトがHomebrewのPython 3.12・Tk・FFmpeg・Node.js・Ollamaを確認し、不足分を導入します。
+スクリプトがHomebrewのPython 3.12・Tk・[字幕対応FFmpeg](https://formulae.brew.sh/formula/ffmpeg-full)・Node.js・Ollamaを確認し、不足分を導入します。
 その後、このフォルダーの `.venv-macos` にMac用ライブラリ、`models` に認識・話者・無音判定のモデルを準備します。
 文脈AIのモデルも初回に取得します（約5GB）。数分以上かかる場合があります。
 Homebrewのサービス起動や、Macの音声出力先・権限の変更は自動で行いません。

@@ -12,7 +12,7 @@ if ! command -v brew >/dev/null; then
   exit 1
 fi
 # No brew services, system audio changes or permissions are enabled automatically.
-for package in python@3.12 python-tk@3.12 ffmpeg node ollama; do
+for package in python@3.12 python-tk@3.12 ffmpeg-full node ollama; do
   if ! brew list --versions "$package" >/dev/null 2>&1; then
     brew install "$package"
   fi

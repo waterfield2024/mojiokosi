@@ -184,11 +184,12 @@ class VideoPreviewDialog(tk.Toplevel):
         try:
             cache=ROOT/".cache"/"previews";cache.mkdir(parents=True,exist_ok=True)
             self.temp=tempfile.TemporaryDirectory(prefix="video-",dir=cache)
-            python=Path(sys.executable).with_name("python.exe")
+            from platform_support import python_executable, IS_MAC
+            python=python_executable()
             self.proc=subprocess.Popen([str(python),"-X","utf8","-u",str(ROOT/"video_preview_worker.py")],stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",creationflags=NO_WINDOW)
             self.owner=ProcessJob(self.proc)
-            if not self.owner.handle:
+            if not IS_MAC and not self.owner.handle:
                 self.proc.terminate()
                 raise RuntimeError("プレビュー用の動画処理を安全に起動できませんでした。画面を閉じて再度お試しください。")
             threading.Thread(target=self.read_events,args=(self.proc,self.events,self.play_frames),daemon=True).start()

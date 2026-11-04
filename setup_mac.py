@@ -114,6 +114,7 @@ def main(argv=None):
             saved = state()
             model = args.model or saved.get('model', 'base')
             device = args.device or saved.get('device', 'auto')
+            without_context = args.without_context_ai or (args.ensure and saved.get('without_context_ai', False))
             if model not in ('base', 'small', 'turbo', 'granite', 'haas', 'none'): model = 'base'
             print('[1/4] Mac専用のPython環境を準備しています…', flush=True)
             venv.EnvBuilder(with_pip=True, upgrade=python.is_file()).create(python.parent.parent)
@@ -122,14 +123,14 @@ def main(argv=None):
             run([python, '-m', 'pip', 'check'])
             print('[3/4] 話者・無音判定・認識モデルを準備しています…', flush=True)
             run([python, '-X', 'utf8', __file__, '--assets-only', '--model', model])
-            if not args.without_context_ai:
+            if not without_context:
                 run([python, '-X', 'utf8', '-c', 'from setup_mac import prepare_context;prepare_context()'])
             print('[4/4] Mac用の起動機能を確認しています…', flush=True)
             run([python, '-X', 'utf8', ROOT/'run.py', '--check'])
             if args.device:
                 run([python, '-c', 'from asr import save_compute;save_compute(' + repr('cpu' if device == 'cpu' else 'auto') + ')'])
             data = dict(fingerprint=fingerprint(), model=model, device=device,
-                        without_context_ai=args.without_context_ai,
+                        without_context_ai=without_context,
                         assets={name: (ROOT/name).stat().st_size for name in required_assets(model, False)[2:]})
             temporary = STATE.with_suffix('.tmp')
             temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), 'utf-8')

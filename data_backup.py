@@ -92,7 +92,7 @@ def _validate(folder, original_root, *, allow_local_sources=False):
                 if not pcm or hashlib.sha256(pcm).hexdigest() != clip.get('sha256'):
                     raise ValueError('学習音声の内容を確認できません。バックアップを作成し直してください。')
             else:
-                source = Path(clip['source'])
+                source = Path(clip['source']) if allow_local_sources else ud.stored_path(clip['source'])
                 if allow_local_sources:
                     if clip.get('file'):
                         raise ValueError('復元前の学習音声が見つかりません。現在のデータは変更していません。')
@@ -101,9 +101,11 @@ def _validate(folder, original_root, *, allow_local_sources=False):
                     if not source.is_file() or source.stat().st_size == 0:
                         raise ValueError('学習待ちの発言の元音声が見つからないため、元に戻せません。')
                 else:
-                    if not source.is_absolute() or not source.is_relative_to(original_root):
+                    if not source.is_absolute() or not source.is_relative_to(ud.stored_path(original_root)):
                         raise ValueError('バックアップに必要な学習音声が含まれていません。')
-                    source = folder / source.relative_to(original_root)
+                    relative = source.relative_to(ud.stored_path(original_root))
+                    if '..' in relative.parts: raise ValueError('学習音声の保存場所が正しくありません。')
+                    source = folder.joinpath(*relative.parts)
                     if not source.is_file() or not source.is_relative_to(folder / 'speaker_sources') or not read_pcm(source):
                         raise ValueError('バックアップに学習音声が見つかりません。')
         for history in store.review_history():
@@ -222,7 +224,7 @@ def _extract(archive_path, stage, progress):
         if (not isinstance(manifest, dict) or manifest.get('format') != FORMAT or manifest.get('version') != 1
                 or type(manifest.get('include_results')) is not bool or not isinstance(manifest.get('files'), dict)
                 or not isinstance(manifest.get('created'), str) or not isinstance(manifest.get('device'), str)
-                or not isinstance(manifest.get('source_root'), str) or not Path(manifest['source_root']).is_absolute()):
+                or not isinstance(manifest.get('source_root'), str) or not ud.stored_path(manifest['source_root']).is_absolute()):
             raise ValueError('バックアップの形式・バージョンを確認してください。')
         files = manifest['files']
         if set(names) != {MANIFEST} | {'data/' + n for n in files}: raise ValueError('バックアップの一覧と内容が一致しません。')
@@ -251,7 +253,7 @@ def _extract(archive_path, stage, progress):
                     h.update(block); dest.write(block)
             if count != entry['bytes'] or h.hexdigest() != entry['sha256']:
                 raise ValueError('バックアップが破損しています。元のPCで作成し直してください。')
-    summary = _validate(stage, Path(manifest['source_root']))
+    summary = _validate(stage, ud.stored_path(manifest['source_root']))
     return {**manifest, 'summary': summary}
 
 
@@ -282,7 +284,7 @@ def restore_backup(path, *, expected_fingerprint, root=None, progress=lambda tex
                 file = stage / name
                 if file.suffix.lower() == '.json' and (name == 'speaker_memory.json' or name.startswith('transcripts/')):
                     data = _json(file)
-                    relocated = ud._relocate(data, Path(manifest['source_root']), stage, root)
+                    relocated = ud._relocate(data, ud.stored_path(manifest['source_root']), stage, root)
                     if data != relocated: file.write_text(json.dumps(relocated, ensure_ascii=False, indent=2), 'utf-8')
             if manifest['device'] != device_id() and (stage / 'recording_settings.json').exists():
                 data = _json(stage / 'recording_settings.json')

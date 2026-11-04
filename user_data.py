@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath, PurePosixPath
 import shutil
 import threading
 import time
@@ -125,6 +125,12 @@ def _locked(root):
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
+def stored_path(value):
+    """Interpret saved paths in their originating OS, without accessing that OS."""
+    windows = PureWindowsPath(str(value))
+    return windows if windows.is_absolute() else PurePosixPath(str(value))
+
+
 def _relocate(value, legacy, stage, root, key='', *, require_exists=True):
     if isinstance(value, dict):
         return {k: _relocate(v, legacy, stage, root, k, require_exists=require_exists) for k, v in value.items()}
@@ -132,7 +138,12 @@ def _relocate(value, legacy, stage, root, key='', *, require_exists=True):
         return [_relocate(v, legacy, stage, root, key, require_exists=require_exists) for v in value]
     if key not in {'source', 'audio_file', 'video_file', 'video_source', 'before_context', 'origin', 'folder', 'result_path'} or not isinstance(value, str):
         return value
-    path = Path(value)
+    path, old = stored_path(value), stored_path(legacy)
+    if path.is_absolute() and path.is_relative_to(old):
+        relative = path.relative_to(old)
+        if '..' not in relative.parts and (not require_exists or stage.joinpath(*relative.parts).exists()):
+            return str(root.joinpath(*relative.parts))
+    path, legacy = Path(value), Path(str(legacy))
     # Windows may spell the same existing location as RUNNER~1 or runneradmin.
     # Keep the lexical route for a previous PC's now-unavailable paths, and use
     # canonical names when importing existing files through a short-path alias.
@@ -177,9 +188,9 @@ def _prepare_location(root):
     if all(marker.get(k) == v for k, v in identity.items()): return
     previous = marker.get('storage_root')
     if previous is not None:
-        if not isinstance(previous, str) or not Path(previous).is_absolute():
+        if not isinstance(previous, str) or not stored_path(previous).is_absolute():
             raise ValueError('保存データの以前の場所を確認できません。')
-        if Path(previous) != root: relocate_store(root, Path(previous), root)
+        if stored_path(previous) != stored_path(root): relocate_store(root, stored_path(previous), root)
     if marker.get('storage_device') not in (None, identity['storage_device']):
         recording = root / 'recording_settings.json'
         if recording.is_file():

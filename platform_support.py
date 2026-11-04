@@ -23,7 +23,10 @@ def environment_python(root=ROOT, windowed=False):
 def tool_path(name, root=ROOT):
     if not IS_MAC:
         return Path(root) / '.tools' / (name + '.exe')
-    for path in (Path(root) / '.tools/macos-arm64' / name, Path('/opt/homebrew/bin') / name):
+    candidates = [Path(root) / '.tools/macos-arm64' / name]
+    if name == 'ffmpeg': candidates.append(Path('/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg'))
+    candidates.append(Path('/opt/homebrew/bin') / name)
+    for path in candidates:
         if path.is_file():
             return path
     return Path(shutil.which(name) or '/opt/homebrew/bin/' + name)
