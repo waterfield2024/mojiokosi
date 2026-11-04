@@ -18,6 +18,7 @@ from speech_gate import SpeechGate, overlaps_speech, keep_spoken_rows
 from speech_preferences import profile as speech_profile, read_control as speech_control
 from live_prompt import WHISPER_MODELS, make_prompt, reliable, transcribe_with_prompt
 from utterance_audio import AudioChunk, mode as segmentation_mode, pause_duration, read_pause_control
+from utterance_audio import utterance_limit, read_limit_control, MAX_SECONDS
 
 def next_live_chunk(chunks, pending, max_samples):
     """Catch up by joining queued audio, never dropping unrecognized speech."""
@@ -142,6 +143,7 @@ def run_live(request, job, models=None):
     seconds = max(2, min(10, int(request.get("chunk_seconds", 2))))
     segmentation = segmentation_mode(request.get('segmentation', 'utterance'))
     pause_seconds = pause_duration(request.get('pause_seconds', .7))
+    max_utterance_seconds = utterance_limit(request.get('max_utterance_seconds', MAX_SECONDS))
     sensitivity = speech_profile(request.get('speech_sensitivity', 'balanced')).key
     use_previous = request.get('live_previous_text', True)
     if type(use_previous) is not bool:
@@ -164,6 +166,7 @@ def run_live(request, job, models=None):
     data['live_previous_text'] = use_previous
     data['segmentation'] = segmentation
     data['pause_seconds'] = pause_seconds
+    data['max_utterance_seconds'] = max_utterance_seconds
     # A checkpoint exists even if capture or the engine later fails.
     write_json(folder / "result.json", data)
     emit("checkpoint", result_path=str(folder / "result.json"))
@@ -199,9 +202,11 @@ def run_live(request, job, models=None):
     noise_state = None
 
     def service_speech():
-        nonlocal sensitivity, speech_applied, pause_seconds
+        nonlocal sensitivity, speech_applied, pause_seconds, max_utterance_seconds
         pause_seconds = read_pause_control(job / 'pause-control.json', pause_seconds)
         data['pause_seconds'] = pause_seconds
+        max_utterance_seconds = read_limit_control(job / 'utterance-control.json', max_utterance_seconds)
+        data['max_utterance_seconds'] = max_utterance_seconds
         sensitivity = speech_control(job / 'speech-control.json', sensitivity)
         if sensitivity != speech_applied:
             speech_gate.configure(sensitivity)
@@ -297,7 +302,8 @@ def run_live(request, job, models=None):
         capture = LoopbackCapture(request["device"], wav, chunks, stopped, seconds,
                                    lambda **values: emit("live_meter", **values))
         capture.set_sensitivity(sensitivity, job / 'speech-control.json')
-        capture.set_segmentation(segmentation, pause_seconds=pause_seconds, control_path=job / 'pause-control.json')
+        capture.set_segmentation(segmentation, pause_seconds=pause_seconds, control_path=job / 'pause-control.json',
+                                 max_utterance_seconds=max_utterance_seconds, max_control_path=job / 'utterance-control.json')
         capture.start()
         inference = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-asr")
         deadline = time.monotonic() + 15
@@ -497,6 +503,7 @@ def run_live(request, job, models=None):
         if models:
             models.park()
         data['pause_seconds'] = read_pause_control(job / 'pause-control.json', pause_seconds)
+        data['max_utterance_seconds'] = read_limit_control(job / 'utterance-control.json', max_utterance_seconds)
         data["recording_complete"] = bool(capture and capture.done.is_set() and not capture.error and wav.is_file())
         if capture:
             data['duration'] = capture.total / RATE

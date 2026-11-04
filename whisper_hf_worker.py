@@ -39,6 +39,10 @@ def serve(folder,device):
         inputs=processor(audio,sampling_rate=16000,return_tensors='pt',return_attention_mask=True)
         inputs={key:value.to(device,dtype=dtype) if key=='input_features' else value.to(device) for key,value in inputs.items()}
         options={'task':'transcribe','language':None if language=='auto' else language,'return_timestamps':True,'num_beams':1,'do_sample':False,'max_new_tokens':224,'max_length':None}
+        if len(audio) > 12*16000:
+            # Longer live utterances need more output tokens. Use the total
+            # decoder budget so prompt + start tokens still fit the model.
+            options.update(max_new_tokens=None,max_length=model.config.max_target_positions)
         if prompt:
             ids=processor.get_prompt_ids(prompt[-800:],return_tensors='pt')
             # Keep the start-of-previous token and the most recent prompt tokens.

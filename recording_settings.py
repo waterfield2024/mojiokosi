@@ -43,9 +43,10 @@ def processing_preferences(data=None, *, context_default=False):
     saved["chunk_seconds"] = seconds
     from speech_preferences import profile
     saved['speech_sensitivity'] = profile(data.get('speech_sensitivity', 'balanced')).key
-    from utterance_audio import mode, pause_duration
+    from utterance_audio import mode, pause_duration, utterance_limit, MAX_SECONDS
     saved['segmentation'] = mode(data.get('segmentation', 'utterance'))
     saved['pause_seconds'] = pause_duration(data.get('pause_seconds', .7))
+    saved['max_utterance_seconds'] = utterance_limit(data.get('max_utterance_seconds', MAX_SECONDS))
     return saved
 
 

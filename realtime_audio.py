@@ -8,6 +8,7 @@ import wave
 import numpy as np
 from speech_preferences import profile, read_control
 from utterance_audio import UtteranceChunker, mode as segmentation_mode, pause_duration, read_pause_control
+from utterance_audio import utterance_limit, read_limit_control, MAX_SECONDS
 
 RATE = 16000
 
@@ -76,6 +77,8 @@ class LoopbackCapture:
         self.segmentation = 'utterance'
         self.pause_seconds = pause_duration()
         self.pause_control = None
+        self.max_utterance_seconds = utterance_limit()
+        self.max_utterance_control = None
         self.total = 0
         self.error = None
         self.epoch = None
@@ -96,10 +99,13 @@ class LoopbackCapture:
         if control_path is not None:
             self.speech_control = control_path
 
-    def set_segmentation(self, value, *, pause_seconds=.7, control_path=None):
+    def set_segmentation(self, value, *, pause_seconds=.7, control_path=None,
+                         max_utterance_seconds=MAX_SECONDS, max_control_path=None):
         self.segmentation = segmentation_mode(value)
         self.pause_seconds = pause_duration(pause_seconds)
         self.pause_control = control_path
+        self.max_utterance_seconds = utterance_limit(max_utterance_seconds)
+        self.max_utterance_control = max_control_path
 
     def update_chunker(self, chunker):
         # Apply live changes even while the ASR thread is busy with inference.
@@ -110,6 +116,9 @@ class LoopbackCapture:
             if self.pause_control is not None:
                 self.pause_seconds = read_pause_control(self.pause_control, self.pause_seconds)
             chunker.pause_seconds = self.pause_seconds
+            if self.max_utterance_control is not None:
+                self.max_utterance_seconds = read_limit_control(self.max_utterance_control, self.max_utterance_seconds)
+            chunker.max_utterance_seconds = self.max_utterance_seconds
             if chunker.activity:
                 chunker.activity.configure(self.profile.key)
 
@@ -149,7 +158,8 @@ class LoopbackCapture:
             def submit(a, b, core):
                 writer._file.flush()
                 self.chunks.put((a, b, core))
-            chunker = (UtteranceChunker(self.chunks.put, self.seconds, self.profile.key, activity, pause_seconds=self.pause_seconds)
+            chunker = (UtteranceChunker(self.chunks.put, self.seconds, self.profile.key, activity,
+                                       pause_seconds=self.pause_seconds, max_utterance_seconds=self.max_utterance_seconds)
                        if self.segmentation == 'utterance' else Chunker(submit, self.seconds, self.profile.key))
             epoch = time.monotonic()
             self.epoch = epoch

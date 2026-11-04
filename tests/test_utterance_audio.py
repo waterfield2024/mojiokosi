@@ -205,6 +205,7 @@ class UtterancePipeline(unittest.TestCase):
             def recognize(pcm):
                 text=texts[len(hints)];hints.append(recognizer.prompt)
                 (folder/'pause-control.json').write_text('{"pause_seconds":2.0}','utf-8')
+                (folder/'utterance-control.json').write_text('{"max_utterance_seconds":30}','utf-8')
                 return {'segments':[dict(start=0,end=len(pcm)/32000,text=text)]}
             recognizer.transcribe.side_effect=recognize
             diarizer=Mock(profiles={},remembered={},memory_error='')
@@ -215,7 +216,8 @@ class UtterancePipeline(unittest.TestCase):
             gate=Mock(warning='',intervals=lambda pcm:[(0,len(pcm)//2)])
             requests=[AudioChunk(0,2*RATE,0,0,False),AudioChunk(0,4*RATE,0,0,False),
                       AudioChunk(0,5*RATE,0,0,True),AudioChunk(5*RATE,7*RATE,5*RATE,1,True),None]
-            request=dict(model='base',device={'name':'fixture'},live_diarize=True,diarize=False,context_correct=False,pause_seconds=1.5)
+            request=dict(model='base',device={'name':'fixture'},live_diarize=True,diarize=False,context_correct=False,
+                         pause_seconds=1.5,max_utterance_seconds=20)
             with patch.object(engine,'RESULTS',folder/'results'),patch.object(realtime,'LoopbackCapture',Capture), \
                  patch.object(realtime,'SpeechGate',return_value=gate),patch.object(realtime,'next_live_chunk',side_effect=requests), \
                  patch.object(realtime,'LiveSpeakerProcess',return_value=diarizer), \
@@ -229,6 +231,9 @@ class UtterancePipeline(unittest.TestCase):
             self.assertEqual(capture_options['pause_seconds'],1.5)
             self.assertEqual(capture_options['control_path'],folder/'pause-control.json')
             self.assertEqual(result['pause_seconds'],2.)
+            self.assertEqual(capture_options['max_utterance_seconds'],20)
+            self.assertEqual(capture_options['max_control_path'],folder/'utterance-control.json')
+            self.assertEqual(result['max_utterance_seconds'],30)
             self.assertEqual([r['text'] for r in result['segments']],texts[2:])
             self.assertEqual([e['kind'] for e in events if e['kind'] in {'live_preview','live_segments'}],
                              ['live_preview','live_preview','live_segments','live_segments'])
