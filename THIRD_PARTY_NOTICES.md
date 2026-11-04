@@ -27,6 +27,9 @@ The URL and SHA-256 are pinned from https://www.python.org/ftp/python/index-wind
 | yt-dlp / yt-dlp-ejs | https://github.com/yt-dlp/yt-dlp — Unlicense and upstream component notices |
 | PyAudioWPatch | https://github.com/s0d3s/PyAudioWPatch — MIT / PortAudio notices |
 | windows-capture | https://github.com/NiiightmareXD/windows-capture — MIT |
+| python-sounddevice (Mac) | https://github.com/spatialaudio/python-sounddevice — MIT; bundled PortAudio notices apply. |
+| PyObjC (Mac) | https://github.com/ronaldoussoren/pyobjc — MIT; Cocoa, Quartz, CoreMedia and ScreenCaptureKit bindings. |
+| Homebrew ffmpeg-full (Mac) | https://formulae.brew.sh/formula/ffmpeg-full — installed by Homebrew, not bundled; includes libass and its FFmpeg build/component license terms. |
 | OpenCV Python | https://github.com/opencv/opencv-python — Apache-2.0 and bundled components |
 | Ollama / Qwen2.5 7B (optional, installed separately) | https://ollama.com/ / https://huggingface.co/Qwen/Qwen2.5-7B-Instruct — MIT / Apache-2.0 |
 

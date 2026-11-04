@@ -264,7 +264,7 @@ class RealtimeControls:
         canvas.bind('<Configure>', lambda e: canvas.itemconfigure(content, width=e.width))
         def scroll_settings(event):
             if event.widget.winfo_class() not in {'TCombobox', 'Text'} and canvas.yview() != (0., 1.):
-                canvas.yview_scroll(-int(event.delta/120), 'units')
+                canvas.yview_scroll(-int(event.delta if IS_MAC else event.delta/120), 'units')
         win.bind('<MouseWheel>', scroll_settings, add='+')
         ttk.Label(frame, text="動画を再生しながら、字幕を重ねて表示", font=("Yu Gothic UI", 16, "bold")).pack(anchor="w")
         ttk.Label(frame, text=("BlackHole 2chを選び、Macの音声出力を複数出力装置にします。マイクは使いません。" if IS_MAC else "選んだスピーカー／ヘッドホンの音声を取り込みます。マイクは使いません。")).pack(anchor="w", pady=(4, 12))

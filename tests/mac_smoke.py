@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import subprocess
+import wave
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,14 +55,26 @@ print('Native Mac GUI, fonts, monitors, overlay, history, settings, shortcut: OK
 from whisper_hf_asr import WhisperHFRecognizer
 job = Path(data.name)/'recognition'
 job.mkdir()
-recognizer = WhisperHFRecognizer('base', 'ja', '', 'cpu', job, print)
+speech = job/'speech.aiff'
+pcm = job/'speech.wav'
+subprocess.run(['/usr/bin/say', '-o', str(speech), 'Hello. This is a test of local speech recognition on a Mac.'], check=True)
+subprocess.run([str(tool_path('ffmpeg')), '-hide_banner', '-loglevel', 'error', '-i', str(speech),
+                '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', str(pcm)], check=True)
+recognizer = WhisperHFRecognizer('base', 'en', '', 'auto', job, print)
 try:
+    import torch
+    if torch.backends.mps.is_available():
+        assert recognizer.device == 'MPS', recognizer.failures
     result = recognizer.transcribe(b'\0' * 32000)
     assert result['segments'] == []
+    with wave.open(str(pcm)) as stream:
+        result = recognizer.transcribe(stream.readframes(stream.getnframes()))
+    assert result['text'].strip(), result
+    print('Mac real speech result:', recognizer.device, result['text'])
     assert recognizer.healthy()
 finally:
     recognizer.close()
-print('Mac Whisper base worker load, warmup, silence recognition, close: OK')
+print('Mac Whisper base worker load, Metal inference, silence recognition, close: OK')
 
 import subprocess
 source = job/'sample.mp4'

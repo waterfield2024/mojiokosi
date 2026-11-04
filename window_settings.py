@@ -90,9 +90,13 @@ def snapshot(window, previous=None):
     if IS_MAC:
         if window.state() in {'withdrawn', 'iconic'} and previous: return previous
         from overlay_preferences import closest_area
+        from mac_native import cocoa_window
+        native_window = cocoa_window(window)
+        maximized = bool(native_window and native_window.isZoomed())
+        if maximized and previous: return dict(previous, maximized=True)
         x, y, width, height = window.winfo_x(), window.winfo_y(), window.winfo_width(), window.winfo_height()
         area = closest_area(x, y, width, height, display_areas(window))
-        return dict(x=x, y=y, size=[width, height], device=area['device'], rect=area['rect'], dpi=96, maximized=False)
+        return dict(x=x, y=y, size=[width, height], device=area['device'], rect=area['rect'], dpi=96, maximized=maximized)
     value = placement(window)
     # Hiding/minimizing must not replace the last visible state or normal bounds.
     if window.state() in {"withdrawn", "iconic"} and previous:
@@ -119,11 +123,15 @@ def fit(saved, areas, minimum, dpi):
 
 def restore(window, saved):
     if IS_MAC:
-        from mac_native import move_window
+        from mac_native import move_window, cocoa_window
         x, y, width, height, area = fit(saved, display_areas(window), window.minsize(), 96)
+        window.minsize(min(window.minsize()[0], width), min(window.minsize()[1], height))
         window.geometry(f'{width}x{height}')
         window.deiconify()
         move_window(window, x, y)
+        native_window = cocoa_window(window)
+        if native_window and bool(native_window.isZoomed()) != saved['maximized']:
+            native_window.zoom_(None)
         return
     hwnd = handle(window)
     # Derive frame margins in the same DPI context as Tk; saved size includes them.

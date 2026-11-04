@@ -6,6 +6,7 @@ from pathlib import Path
 import queue
 import subprocess
 import sys
+import signal
 import threading
 import uuid
 from asr import ROOT, NO_WINDOW
@@ -16,8 +17,12 @@ class ProcessJob:
     def __init__(self, process):
         self.process = process
         self.handle = None
+        self.group = None
         self.lock = threading.Lock()
         if os.name != 'nt':
+            try:
+                if os.getpgid(process.pid) == process.pid: self.group = process.pid
+            except ProcessLookupError: pass
             return
         from ctypes import wintypes as w
         class Basic(ctypes.Structure):
@@ -45,10 +50,19 @@ class ProcessJob:
 
     def close(self):
         if os.name != 'nt':
-            if self.process.poll() is None:
-                self.process.terminate()
-                try: self.process.wait(timeout=3)
-                except subprocess.TimeoutExpired: self.process.kill(); self.process.wait(timeout=3)
+            with self.lock:
+                group, self.group = self.group, None
+                if group:
+                    try: os.killpg(group, signal.SIGTERM)
+                    except ProcessLookupError: pass
+                elif self.process.poll() is None: self.process.terminate()
+                try: self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if group:
+                        try: os.killpg(group, signal.SIGKILL)
+                        except ProcessLookupError: pass
+                    else: self.process.kill()
+                    self.process.wait(timeout=3)
             return
         with self.lock:
             if self.handle:
@@ -111,7 +125,7 @@ class PersistentLiveProcess:
         try:
             self.proc = subprocess.Popen([str(python), '-X', 'utf8', '-u', str(ROOT / 'live_models.py'), str(self.folder)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, encoding='utf-8',
-                errors='replace', creationflags=NO_WINDOW)
+                errors='replace', creationflags=NO_WINDOW, start_new_session=os.name != 'nt')
             self.process_job = ProcessJob(self.proc)
         except BaseException:
             if self.proc:
@@ -207,7 +221,7 @@ class PersistentLiveProcess:
                     subprocess.run(['taskkill', '/PID', str(self.proc.pid), '/T', '/F'],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
                 else:
-                    self.proc.kill()
+                    self.process_job.close()
                 self.proc.wait(timeout=10)
             finally:
                 self.process_job.close()

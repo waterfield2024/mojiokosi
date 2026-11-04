@@ -100,7 +100,7 @@ class ScreenRecorder:
         self.log = (self.folder / 'recorder.log').open('w', encoding='utf-8')
         python = python_executable()
         self.proc = subprocess.Popen([str(python), '-X', 'utf8', '-u', str(ROOT/'screen_capture_worker.py')],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, encoding='utf-8', creationflags=NO_WINDOW)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, text=True, encoding='utf-8', creationflags=NO_WINDOW, start_new_session=IS_MAC)
         self.owner = ProcessJob(self.proc)
         if not IS_MAC and not self.owner.handle:
             self.proc.terminate(); self.proc.wait(timeout=10); self.log.close()

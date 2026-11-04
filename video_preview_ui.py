@@ -187,7 +187,7 @@ class VideoPreviewDialog(tk.Toplevel):
             from platform_support import python_executable, IS_MAC
             python=python_executable()
             self.proc=subprocess.Popen([str(python),"-X","utf8","-u",str(ROOT/"video_preview_worker.py")],stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",creationflags=NO_WINDOW)
+                stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",creationflags=NO_WINDOW,start_new_session=IS_MAC)
             self.owner=ProcessJob(self.proc)
             if not IS_MAC and not self.owner.handle:
                 self.proc.terminate()

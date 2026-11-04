@@ -7,6 +7,7 @@ import socket
 import subprocess
 import time
 import signal
+import threading
 from platform_support import IS_MAC, tool_path
 
 ROOT = Path(__file__).resolve().parent
@@ -44,6 +45,11 @@ def start(compute, progress):
     if _process is not None and _process.poll() is None:
         return _url
     stop()
+    if IS_MAC and threading.current_thread() is threading.main_thread() and signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+        def terminate(signum, frame):
+            stop()
+            raise SystemExit(0)
+        signal.signal(signal.SIGTERM, terminate)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
