@@ -13,6 +13,7 @@ YouTube・保存した動画・PCで再生中の音声を、日本語の字幕�
 既存のPython 3.12（64ビット・Tcl/Tk付き）があれば再利用します。見つからない場合は
 [Python公式のWindows配布](https://www.python.org/ftp/python/index-windows.json)にある3.12.10を
 `.python/3.12.10` に取得し、SHA-256で確認して展開します。仮想環境は `.venv` に作ります。
+移設済みのPythonが `.python/runtime` にある場合も、セットアップ時に再利用します。
 管理者権限、PATHの手動設定、PowerShellの実行ポリシー変更は不要です。
 
 ## 最初の1回

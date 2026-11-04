@@ -14,6 +14,9 @@ exit /b 1
 set "WHISPER_SETUP_PYTHON=.venv\Scripts\python.exe"
 call :check_python
 if not errorlevel 1 goto ready
+set "WHISPER_SETUP_PYTHON=.python\runtime\python.exe"
+call :check_python
+if not errorlevel 1 goto ready
 set "WHISPER_SETUP_PYTHON=.python\3.12.10\python.exe"
 call :check_python
 if not errorlevel 1 goto ready
