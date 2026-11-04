@@ -133,6 +133,13 @@ def _relocate(value, legacy, stage, root, key='', *, require_exists=True):
     if key not in {'source', 'audio_file', 'video_file', 'video_source', 'before_context', 'origin', 'folder', 'result_path'} or not isinstance(value, str):
         return value
     path = Path(value)
+    # Windows may spell the same existing location as RUNNER~1 or runneradmin.
+    # Keep the lexical route for a previous PC's now-unavailable paths, and use
+    # canonical names when importing existing files through a short-path alias.
+    if path.is_absolute() and not path.is_relative_to(legacy) and path.exists():
+        canonical, canonical_legacy = path.resolve(), legacy.resolve()
+        if canonical.is_relative_to(canonical_legacy):
+            path, legacy = canonical, canonical_legacy
     if path.is_absolute() and path.is_relative_to(legacy):
         relative = path.relative_to(legacy)
         if '..' not in relative.parts and (not require_exists or (stage / relative).exists()):
@@ -200,6 +207,7 @@ def _retain_pending_audio(data, legacy, stage, root):
                 if cached and any((stage / 'speaker_memory_clips' / sub / cached).is_file() for sub in ('', '.undo')):
                     continue
                 source = Path(clip['source'])
+                if source.is_absolute() and source.is_file(): source = source.resolve()
                 if source.is_absolute() and source.is_file():
                     relative = source.relative_to(legacy) if source.is_relative_to(legacy) else None
                     if relative is None or not (stage / relative).is_file():
