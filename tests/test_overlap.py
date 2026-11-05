@@ -134,7 +134,7 @@ class AudioIntegrity(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);path=root/'.audio/separated/a.wav';path.parent.mkdir(parents=True);path.touch()
             data=row('a',10.5,11.5,separated_audio='.audio/separated/a.wav',separated_offset=10)
-            self.assertEqual(playback_target({},root,data),(path,(.5,1.5)))
+            self.assertEqual(playback_target({},root,data),(path.resolve(),(.5,1.5)))
 
 
 class DisplayAndSettings(unittest.TestCase):
