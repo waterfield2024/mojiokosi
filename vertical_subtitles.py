@@ -193,7 +193,11 @@ def video_cues(segments, width, height, duration=None, speakers=None, font_scale
     size = max(8, round(max(12, min(height*.052, width*.075)) * font_scale))
     box_height = max(cell_size(size)+24, round(height*.82))
     rows = []
+    separated = []
     for row in timed_segments(segments, duration):
+        if row.get('overlap_separated'):
+            separated.append(row)
+            continue
         start, end = float(row["start"]), float(row["end"])
         if not math.isfinite(start) or not math.isfinite(end):
             raise ValueError("字幕の時刻が不正です。")
@@ -219,6 +223,14 @@ def video_cues(segments, width, height, duration=None, speakers=None, font_scale
                          "lines": [name, part] if name else part.split("\n"), "name_first": bool(name),
                          "segment_index": segment_index})
             cursor = boundary
+    if separated:
+        from overlap_captions import cues as overlap_cues
+        def named_columns(text, name):
+            prefix = fit_name(name, size, (box_height-24)*.35)+'：' if name else ''
+            used = sum(u[2] for u in units(prefix, size, box_height-24))
+            return [prefix+part for part in pages(text, size, max(cell_size(size)*2, box_height-24-used), 1)]
+        cues.extend(overlap_cues(separated, named_columns, speakers, vertical=True))
+        cues.sort(key=lambda cue: cue['start_cs'])
     return cues, size, box_width(size), box_height
 
 

@@ -22,7 +22,7 @@ def serve(folder,device):
     from granite_decode import timed_tokens,segment_words
     if device == 'mps' and not torch.backends.mps.is_available():
         raise RuntimeError('Metalを利用できません。CPUで再試行します。')
-    torch.set_num_threads(min(8,max(1,(os.cpu_count() or 4)//2)))
+    torch.set_num_threads(min(8,max(1,int(os.environ.get('WHISPER_BACKGROUND_THREADS', (os.cpu_count() or 4)//2)))))
     if device == "cuda" and not torch.cuda.is_available():raise RuntimeError("CUDAを利用できません。")
     processor = AutoProcessor.from_pretrained(folder,local_files_only=True,trust_remote_code=False)
     # FP32 also supports older GeForce cards without BF16 hardware.

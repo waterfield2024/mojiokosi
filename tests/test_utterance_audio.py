@@ -208,7 +208,7 @@ class UtterancePipeline(unittest.TestCase):
                 (folder/'utterance-control.json').write_text('{"max_utterance_seconds":30}','utf-8')
                 return {'segments':[dict(start=0,end=len(pcm)/32000,text=text)]}
             recognizer.transcribe.side_effect=recognize
-            diarizer=Mock(profiles={},remembered={},memory_error='')
+            diarizer=Mock(profiles={},remembered={},memory_error='',overlaps=[])
             def speakers(wav,a,b,names,*,preview=False):
                 speaker_requests.append((a,b,preview))
                 return [dict(start=a/RATE,end=b/RATE,speaker='speaker_0')]

@@ -69,6 +69,7 @@ class RealtimeControls:
         self.live_final_utterance = -1
         self.update_live_boundary_hint()
         self.live_diarize = tk.BooleanVar(value=processing["live_diarize"])
+        self.live_overlap = tk.BooleanVar(value=processing['live_overlap'])
         self.live_context = tk.BooleanVar(value=processing["context_correct"])
         self.live_correct = tk.BooleanVar(value=processing["live_correct"])
         self.live_organize = tk.BooleanVar(value=processing['live_organize'])
@@ -194,7 +195,7 @@ class RealtimeControls:
         self.live_noise.trace_add('write', self.change_live_noise)
         self.live_sensitivity.trace_add('write', self.change_live_sensitivity)
         self.compute.trace_add("write", self.schedule_live_preload)
-        for variable in (self.live_diarize, self.live_correct, self.live_organize):
+        for variable in (self.live_diarize, self.live_overlap, self.live_correct, self.live_organize):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=True))
         for variable in (self.live_context, self.live_chunk, self.live_previous_text):
             variable.trace_add("write", lambda *args: self.change_live_processing(preload=False))
@@ -381,6 +382,7 @@ class RealtimeControls:
         ttk.Label(row, textvariable=self.live_overlay_hint).pack(side="left", padx=10)
         self.live_post_controls = []
         for label, variable in [("リアルタイムで話者を自動判別", self.live_diarize),
+                                ('重なった2人の声を後から分離・補正する（話者判別ON時）', self.live_overlap),
                                 ("直近の文章を整理する（内容を保ち、区切り・句読点を調整）", self.live_organize),
                                 ("字幕の誤変換を文脈で自動修正（字幕を先に表示）", self.live_correct),
                                 ("停止後に文脈AI校正（修正前後を確認できます）", self.live_context)]:
@@ -563,6 +565,7 @@ class RealtimeControls:
     def live_processing_settings(self):
         from recording_settings import processing_preferences
         return processing_preferences({"live_diarize": self.live_diarize.get(), "live_correct": self.live_correct.get(),
+                                       'live_overlap': self.live_overlap.get(),
                                        'live_organize': self.live_organize.get(),
                                        "context_correct": self.live_context.get(), "chunk_seconds": int(self.live_chunk.get()),
                                        'live_noise': self.live_noise.get(),
@@ -793,6 +796,7 @@ class RealtimeControls:
                    "num_speakers": self.speaker_count(), "context_correct": self.live_context.get(),
                    "live_correct": self.live_correct.get(),
                    "live_organize": self.live_organize.get(),
+                   'live_overlap': self.live_overlap.get(),
                    "live_noise": self.live_noise.get(),
                    'live_previous_text': self.live_previous_text.get(),
                    'segmentation': SEGMENTATION_MODES[self.live_segmentation.get()],
@@ -845,6 +849,13 @@ class RealtimeControls:
             return True
         if kind == "live_context_status":
             self.live_context_message.set(event["text"])
+            return True
+        if kind == 'live_overlap_status':
+            self.live_context_message.set(event['text'])
+            return True
+        if kind == 'live_overlap_patch':
+            from overlap_ui import receive_patch
+            receive_patch(self, event['record'])
             return True
         if kind == "live_corrections":
             from correction_memory import filter_change
@@ -1063,6 +1074,7 @@ class RealtimeControls:
             "names": self.result_data.get("speaker_name_edits", {}), "assignments": assignments,
             "memory_links": self.result_data.get("speaker_memory_links", {}), "voice_corrections": corrections,
             "texts": self.result_data.get("live_text_edits", {}),
+            'overlap_states': self.result_data.get('live_overlap_states', {}),
             "review_states": self.result_data.get("live_context_review_states", {})})
         if self.overlay and not self.overlay.closed:
             self.overlay.set_speakers(self.speakers)

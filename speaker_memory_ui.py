@@ -97,6 +97,7 @@ class SpeakerMemoryControls:
         from speaker_relearning import correction_ranges
         rows, seconds = [], 0.
         for row in self.segments:
+            if row.get('overlap_detected') or row.get('overlap_separated'): continue
             if row.get("speaker") != speaker or row.get("speaker_review") and not row.get("speaker_manual"):
                 continue
             try:
@@ -157,7 +158,7 @@ class SpeakerMemoryControls:
         data = self.result_data
         source = resolve_cached_audio(data, Path(key[0])) or data.get("audio_file") or data.get("source", "")
         ranges = [[float(row["start"]), float(row["end"])] for row in self.segments
-                  if row.get("speaker") == key[1] and
+                  if row.get("speaker") == key[1] and not (row.get('overlap_detected') or row.get('overlap_separated')) and
                   (not row.get("speaker_review") or row.get("speaker_manual"))]
         if not source or not Path(source).is_file() or not ranges:
             self.complete_memory_profile(key, intent["token"], error="声を登録できる録音・発言がありません。")
@@ -212,6 +213,9 @@ class SpeakerMemoryControls:
         return affected
 
     def learn_corrected_speaker(self, row, previous=None):
+        if row.get('overlap_detected') or row.get('overlap_separated'):
+            self.memory_status.set('話者名は修正しました。声が重なった音声・分離音声は、覚えた声を保護するため学習には使いません。')
+            return
         if not self.result_path or self.result_data is None:
             return
         row.setdefault("voice_correction_key", uuid.uuid4().hex)
@@ -261,6 +265,7 @@ class SpeakerMemoryControls:
         candidates, seconds = [], 0.
         try:
             for candidate in [row] + [r for r in reversed(self.segments) if r is not row]:
+                if candidate.get('overlap_detected') or candidate.get('overlap_separated'): continue
                 if candidate.get("speaker") != speaker or not candidate.get("speaker_manual"):
                     continue
                 start, end = float(candidate["start"]), float(candidate["end"])

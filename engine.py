@@ -236,6 +236,26 @@ def apply_recorded_names(data, wav, turns, request, protected=None):
     return data
 
 
+def run_overlap_job(request, job):
+    from overlap_service import run_file
+    data = request['result']
+    folder = Path(request['result_folder']).resolve()
+    media = resolve_cached_audio(data, folder)
+    if not media:
+        raise FileNotFoundError('保存した録音が見つかりません。結果フォルダー全体を戻してください。')
+    wav = job / 'overlap-audio.wav'
+    convert_audio(media, wav)
+    # Reuse raw overlap regions retained at capture time when available.
+    turns = data.get('diarization', {}).get('turns', [])
+    if not data.get('overlap_review'):
+        turns = diarize(wav, MODELS/'speakers', 0, lambda text: emit('status', text=text))
+    run_file(data, wav, turns, folder, job, request, lambda text: emit('status', text=text))
+    path = folder / f'overlap_{job.name[:12]}.json'
+    save_result(data, folder)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), 'utf-8')
+    emit('complete', result_path=str(path))
+
+
 def run_speaker_job(request, job):
     data = request["result"]
     folder = Path(request["result_folder"]).resolve()
@@ -320,6 +340,8 @@ def run_job(request_path):
         return run_render_job(request, job)
     if request.get("operation") == "diarize":
         return run_speaker_job(request, job)
+    if request.get('operation') == 'overlap':
+        return run_overlap_job(request, job)
     if request.get("operation") == "context":
         return run_context_job(request, job)
     correction_rules = normalize_rules(request.get("correction_rules", []))
@@ -382,6 +404,14 @@ def run_job(request_path):
         save_result(saved, folder)
         emit("checkpoint", result_path=str(folder / "result.json"))
         apply_recorded_names(saved, wav, turns, request)
+        if request.get('separate_overlap', True):
+            from overlap_service import run_file
+            try:
+                run_file(saved, wav, turns, folder, job, request, lambda text: emit('status', text=text))
+            except Exception as exc:
+                saved['overlap_error'] = str(exc)
+                emit('warning', title='声の重なり', message='音声分離は完了しませんでした。元の文字起こしを保存します。\n'+str(exc))
+            save_result(saved, folder)
     else:
         saved["speaker_error"] = speaker_error
         emit("warning", message="話者判別に失敗したため、文字起こしのみ保存します。後で「話者を再判別」で再実行できます。\n\n" + str(speaker_error))

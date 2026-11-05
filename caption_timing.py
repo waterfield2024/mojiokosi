@@ -40,7 +40,10 @@ def timed_segments(segments, duration=None):
     original.sort(key=lambda item:item[0])
     resolved = []
     for position, (start, end, index, row) in enumerate(original):
-        if position+1 < len(original):end = min(end, original[position+1][0])
+        if position+1 < len(original):
+            following = original[position+1]
+            if not (row.get('overlap_group') and row.get('overlap_group') == following[3].get('overlap_group')):
+                end = min(end, following[0])
         if "caption_timing" in row:start, end = checked_interval(row["caption_timing"])
         if duration is not None:end = min(end, duration)
         if round(end*100) > round(start*100):
@@ -54,6 +57,9 @@ def validate_change(segments, index, start, end, duration=None):
         raise ValueError(f"終了は動画の長さ（{duration:.2f}秒）以内にしてください。")
     for row in timed_segments(segments, duration):
         if row["_caption_index"] == index:continue
+        target = segments[index]
+        if (target.get('overlap_group') and target['overlap_group'] == row.get('overlap_group')
+                and target.get('speaker') != row.get('speaker')): continue
         other_start, other_end = round(row["start"],2), round(row["end"],2)
         if start < other_end and other_start < end:
             raise ValueError(f"字幕 {row['_caption_index']+1}（{other_start:.2f}〜{other_end:.2f}秒）と重なります。開始・終了を調整してください。")

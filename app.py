@@ -192,6 +192,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.reanalyze_button = ttk.Button(result_heading, text="話者を再判別", command=self.analyze_saved, state="disabled")
         self.reanalyze_button.pack(side="right")
         ttk.Button(result_heading, text="履歴・検索", command=self.open_history).pack(side="right", padx=(0, 6))
+        from overlap_ui import open_review
+        ttk.Button(result_heading, text='声の重なり', command=lambda: open_review(self)).pack(side='right', padx=(0, 6))
         table_frame = ttk.Frame(result_box)
         table_frame.pack(fill="both", expand=True)
         self.table = TranscriptTree(table_frame, columns=("start", "end", "speaker", "text"),
@@ -294,6 +296,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             changed = old != text
             if changed:
                 row["words"] = []
+                row['text_manual'] = True
             row["text"] = text
             if not self.proc and (changed or row.get("manual_memory_pending")):
                 from manual_corrections import learn_edit
@@ -325,7 +328,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.editor.insert("1.0", self.segments[int(self.selected)]["text"])
         self.editor.edit_reset()
         self.refresh_speaker_choices()
-        if self.proc and self.operation in {"video", "diarize", "context", "realtime", "compare"}:
+        if self.proc and self.operation in {"video", "diarize", "context", "realtime", "compare", "overlap"}:
             self.editor.configure(state="disabled")
 
     def display_result(self, path):
@@ -441,7 +444,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         if self.operation == "video":
             from video import partial_output
             self.render_partial = partial_output(request["output"], self.job)
-        if self.operation in {"video", "diarize", "context", "realtime", "compare"}:
+        if self.operation in {"video", "diarize", "context", "realtime", "compare", "overlap"}:
             self.editor.configure(state="disabled")
         self.started = time.monotonic()
         self.failed = self.completed = self.cancelled = False

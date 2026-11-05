@@ -363,6 +363,30 @@ class SubtitleOverlay:
         self.until = self.shown_at + (seconds if seconds is not None else min(6, max(1.5, len(pages[-1]['text'])/10)))
         self.draw()
 
+    def replace_segments(self, before, after):
+        """Update visible/queued overlap captions without replaying expired history."""
+        ids = {r.get('segment_id') for r in before}
+        current = self.current_page and self.current_page.get('id') in ids
+        pending = list(self.pages)
+        if not current and not any(isinstance(p, dict) and p.get('id') in ids for p in pending): return False
+        replacements = []
+        for row in after:
+            replacements.extend(self.segment_pages(row['text'], {'speaker': row.get('speaker', ''),
+                'review': bool(row.get('speaker_review')), 'id': row.get('segment_id')}))
+        remaining, inserted = [], False
+        for page in pending:
+            if isinstance(page, dict) and page.get('id') in ids:
+                if not current and not inserted: remaining.extend(replacements); inserted = True
+            else: remaining.append(page)
+        if current and replacements:
+            self.current_page = replacements[0]
+            self.text = self.page_text(self.current_page)
+            self.until = max(self.until, time.monotonic()+1.5)
+            remaining = replacements[1:] + remaining
+        self.pages = deque(remaining[:6])
+        self.draw()
+        return True
+
     def update_assignment(self, segment_id, speaker):
         for page in ([self.current_page] if self.current_page else []) + list(self.pages):
             if isinstance(page, dict) and page.get("id") == segment_id:

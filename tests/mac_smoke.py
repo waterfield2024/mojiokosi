@@ -87,3 +87,11 @@ subprocess.run([str(tool_path('ffmpeg')), '-hide_banner', '-loglevel', 'error', 
                 '-vf', 'ass=subtitles.ass', '-c:v', 'libx264', str(target)], cwd=job, check=True)
 assert target.stat().st_size > 0
 print('Mac Japanese ASS subtitles -> MP4: OK')
+
+# The separator uses CPU in its background process, leaving Metal for live ASR.
+from overlap_model import Separator
+import numpy as np
+separator = Separator(ROOT/'models', print)
+separated = separator.separate(np.zeros(16000, dtype='float32'))
+assert separated.shape == (2, 16000) and np.isfinite(separated).all()
+print('Mac RE-SepFormer weights, CPU inference, two aligned streams: OK')

@@ -16,6 +16,12 @@ def apply_live_edits(data, folder):
     if not path.is_file():
         return data
     edits = json.loads(path.read_text("utf-8"))
+    from overlap import set_state
+    data['live_overlap_states'] = edits.get('overlap_states', {})
+    for record in data.get('overlap_review', []):
+        state = data['live_overlap_states'].get(record['id'])
+        if state in {'applied', 'reverted'}:
+            set_state(data, record, state, force=True)
     names = edits.get("names", {})
     assignments = edits.get("assignments", {})
     data["speaker_name_edits"] = dict(names)
@@ -125,6 +131,7 @@ class LiveDiarizer:
         from speaker_memory import model_signature
         self.model_id = model_signature(models / "embedding.onnx")
         self.samples = {}
+        self.overlaps = []
 
     def reset(self, count=0):
         """Start a fresh recording while retaining native inference models."""
@@ -143,6 +150,7 @@ class LiveDiarizer:
             self.tracker, self.samples = original
 
     def process(self, pcm, offset):
+        self.overlaps = []
         samples = np.frombuffer(pcm, dtype="<i2").astype("float32") / 32768
         if len(samples) < RATE * .3:
             return []
@@ -153,9 +161,19 @@ class LiveDiarizer:
             if b > a:
                 turns.append({"start": a + offset, "end": b + offset, "local": int(t.speaker)})
                 pieces[int(t.speaker)].append((a, b))
+        from overlap import regions
+        self.overlaps = regions(turns, offset, offset + len(samples)/RATE)
+        # Mixed voices must not adapt the identity tracker either. Match only
+        # clean excerpts; a fully overlapped voice stays unknown until separated.
+        if self.overlaps:
+            from recording_speakers import exclusive_ranges
+            clean = exclusive_ranges([{'start': t['start']-offset, 'end': t['end']-offset,
+                                       'speaker': str(t['local'])} for t in turns], len(samples)/RATE)
+            pieces = {key: clean.get(str(key), []) for key in pieces}
         vectors, durations = {}, {}
         for key, intervals in pieces.items():
-            voice = np.concatenate([samples[round(a * RATE):round(b * RATE)] for a, b in intervals])
+            voice = (np.concatenate([samples[round(a * RATE):round(b * RATE)] for a, b in intervals])
+                     if intervals else np.zeros(0, dtype='float32'))
             durations[key] = len(voice) / RATE
             if durations[key] < .5:
                 vectors[key] = np.zeros(self.extractor.dim, dtype="float32")
@@ -213,6 +231,7 @@ class LiveSpeakerProcess:
         self.events = queue.Queue()
         self.stopped = stopped
         self.profiles, self.remembered, self.memory_error = {}, {}, ""
+        self.overlaps = []
         self.log = (Path(job) / "live-speakers.log").open("wb")
         python = Path(sys.executable).with_name("python.exe") if os.name == "nt" else Path(sys.executable)
         try:
@@ -269,6 +288,7 @@ class LiveSpeakerProcess:
         self.profiles = response.get("profiles", {})
         self.remembered = response.get("remembered", {})
         self.memory_error = response.get("memory_error", "")
+        self.overlaps = response.get('overlaps', [])
         return response["turns"]
 
     def close(self):
@@ -317,7 +337,7 @@ def speaker_worker():
                     remembered = match_samples(profiles, memory.load())
                 except Exception as exc:
                     memory_error = str(exc)
-            print(json.dumps({"turns": turns, "profiles": profiles,
+            print(json.dumps({"turns": turns, "profiles": profiles, 'overlaps': worker.overlaps,
                               "remembered": remembered, "memory_error": memory_error}), flush=True)
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)

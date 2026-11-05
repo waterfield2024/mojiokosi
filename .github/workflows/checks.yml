@@ -30,5 +30,7 @@ jobs:
         run: /opt/homebrew/opt/python@3.12/bin/python3.12 setup_mac.py --model base --device cpu --without-context-ai
       - name: Mac adapter tests
         run: .venv-macos/bin/python -m unittest discover -s tests -p test_macos.py -v
+      - name: Overlapping speech contracts
+        run: .venv-macos/bin/python -m unittest discover -s tests -p test_overlap.py -v
       - name: Native GUI and Whisper inference
         run: .venv-macos/bin/python tests/mac_smoke.py

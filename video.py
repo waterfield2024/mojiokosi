@@ -106,7 +106,11 @@ def make_cues(segments, width, height, duration=None, speakers=None, font_scale=
     # Extra room absorbs differences between Pillow and libass font metrics.
     available = (width - 2 * margin) * .90
     clean = []
+    separated = []
     for segment in timed_segments(segments, duration):
+        if segment.get('overlap_separated'):
+            separated.append(segment)
+            continue
         start, end = float(segment["start"]), float(segment["end"])
         if not (math.isfinite(start) and math.isfinite(end)):
             raise ValueError("字幕の時刻が不正です。")
@@ -148,6 +152,15 @@ def make_cues(segments, width, height, duration=None, speakers=None, font_scale=
             cues.append({"start_cs": cursor, "end_cs": boundary, "lines": page, "speaker_font_size": name_size,
                          "segment_index": segment_index})
             cursor = boundary
+    if separated:
+        from overlap_captions import cues as overlap_cues
+        def named_lines(text, name):
+            while len(name) > 1 and font.getlength(name+'：') > available*.45:
+                name = name[:-2]+'…' if name.endswith('…') else name[:-1]+'…'
+            prefix = name+'：' if name else ''
+            return [prefix+line for line in wrap_caption(text, font, max(font_size*2, available-font.getlength(prefix)))]
+        cues.extend(overlap_cues(separated, named_lines, speakers))
+        cues.sort(key=lambda cue: cue['start_cs'])
     return cues, font_size, family, margin
 
 

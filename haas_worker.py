@@ -21,7 +21,7 @@ def serve(folder):
     recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
         encoder=str(folder / 'encoder.quantized.onnx'), decoder=str(folder / 'decoder.onnx'),
         joiner=str(folder / 'joiner.onnx'), tokens=str(folder / 'tokens.txt'),
-        num_threads=min(4, os.cpu_count() or 1), sample_rate=16000,
+        num_threads=min(4, max(1, int(os.environ.get('WHISPER_BACKGROUND_THREADS', os.cpu_count() or 1)))), sample_rate=16000,
         feature_dim=128, model_type='nemo_transducer', provider='cpu')
     emit(kind='ready', device='CPU')
     for line in sys.stdin:

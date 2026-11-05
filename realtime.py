@@ -192,6 +192,12 @@ def run_live(request, job, models=None):
     if recording_mode == "screen":
         data["screen_recording"] = {"complete": False, "monitor": request.get("screen_monitor", {})}
     live_speakers = request.get("live_diarize", True)
+    use_overlap = request.get('live_overlap', True)
+    if type(use_overlap) is not bool: raise ValueError('音声分離はオンかオフを選んでください。')
+    data['live_overlap'] = use_overlap and live_speakers
+    overlap_service = None
+    overlap_seen = set()
+    overlap_state = ''
     live_turns = []
     chunks = queue.Queue()
     pending = deque()
@@ -215,6 +221,43 @@ def run_live(request, job, models=None):
     data['noise_reduction'] = {'model': REPO, 'revision': REVISION, 'recording_audio': 'original',
                                'applied_chunks': 0, 'bypassed_chunks': 0}
     noise_state = None
+
+    def service_overlap():
+        nonlocal overlap_state
+        if not overlap_service: return
+        from overlap import apply_reply
+        for reply in overlap_service.poll():
+            apply_live_edits(data, folder)
+            record = apply_reply(data, reply)
+            if record:
+                write_json(folder / 'result.json', data)
+                emit('live_overlap_patch', record=record)
+        if overlap_service.message != overlap_state:
+            overlap_state = overlap_service.message
+            emit('live_overlap_status', text=overlap_state)
+
+    def queue_overlaps(intervals):
+        nonlocal overlap_service
+        if not data['live_overlap'] or not intervals: return
+        from overlap import plan, apply_reply
+        tasks = plan(data, intervals, overlap_seen)
+        if not tasks: return
+        if overlap_service is None:
+            from overlap_service import OverlapService
+            try:
+                overlap_service = OverlapService({'model': model, 'language': data['language'],
+                    'prompt': prompt, 'compute': 'cpu', 'speech_sensitivity': sensitivity}, job)
+            except Exception as exc:
+                for task in tasks: apply_reply(data, {'id': task['id'], 'message': '音声分離を準備できませんでした：'+str(exc)})
+                emit('live_overlap_status', text='音声分離を準備できません。通常の字幕は続けます。')
+                return
+        for task in tasks:
+            task.update(wav=str(wav), folder=str(folder), profiles=live_diarizer.profiles if live_diarizer else {},
+                        names=dict(data['speakers']))
+            if not overlap_service.submit(task):
+                record = apply_reply(data, {'id': task['id'], 'message': '字幕表示を優先しました。「声の重なり」画面から停止後に再解析できます。'})
+                if record: emit('live_overlap_patch', record=record)
+        write_json(folder / 'result.json', data)
 
     def service_speech():
         nonlocal sensitivity, speech_applied, pause_seconds, max_utterance_seconds
@@ -355,6 +398,7 @@ def run_live(request, job, models=None):
         while True:
             service_noise()
             service_speech()
+            service_overlap()
             service_context()
             if limit and time.monotonic() - start_time >= limit:
                 capture.stop()
@@ -441,6 +485,8 @@ def run_live(request, job, models=None):
             for rows, part in recognize_parts(recognizer, pcm, a, b, core, previous, ranges, prefetched, speech, sensitivity, prompt_for):
                 for row in rows:
                     row['noise_reduced'] = noise_applied
+                    if live_diarizer and any(r['end'] > row['start'] and r['start'] < row['end'] for r in live_diarizer.overlaps):
+                        row['overlap_detected'] = True
                 completed_rows.extend(rows)
                 if provisional:
                     continue
@@ -484,6 +530,10 @@ def run_live(request, job, models=None):
                      remembered_speakers=data.get('remembered_speakers', {}), learned_records=completed_records,
                      device=recognizer.device, lag=round(lag,1),
                      timing={'audio_end':b/RATE,'processing_seconds':round(time.monotonic()-processing_started,3)})
+            if live_diarizer:
+                intervals = [{**r, 'start': max(core/RATE, r['start']), 'end': min(b/RATE, r['end'])}
+                             for r in live_diarizer.overlaps if r['end'] > core/RATE and r['start'] < b/RATE]
+                queue_overlaps(intervals)
             if organize:
                 from live_organization import boundary_changes
                 from live_context import apply_changes
@@ -529,6 +579,19 @@ def run_live(request, job, models=None):
                 recorder.close()
         if inference:
             inference.shutdown(wait=True, cancel_futures=True)
+        if overlap_service:
+            emit('live_stopped')
+            deadline = time.monotonic() + 30
+            while overlap_service.busy and time.monotonic() < deadline and not (models and models.closing()):
+                service_overlap()
+                time.sleep(.05)
+            service_overlap()
+            from overlap import apply_reply
+            for record in list(data.get('overlap_review', [])):
+                if record['status'] == 'pending':
+                    patch = apply_reply(data, {'id': record['id'], 'message': '停止後の待ち時間を超えました。「声の重なり」画面から再解析できます。'})
+                    if patch: emit('live_overlap_patch', record=patch)
+            overlap_service.close()
         if not models:
             noise.close()
             speech_gate.close()

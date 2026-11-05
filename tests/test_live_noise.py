@@ -237,7 +237,7 @@ class NoisePipeline(unittest.TestCase):
                     speaker_audio.append(audio.readframes(audio.getnframes()))
                 return [{'start': 0., 'end': 2., 'speaker': 'speaker_0'}]
             recognizer = Mock(device='CPU', backend='test', failures=[], transcribe=Mock(side_effect=recognize))
-            diarizer = Mock(profiles={}, remembered={}, memory_error='', process=Mock(side_effect=speakers))
+            diarizer = Mock(profiles={}, remembered={}, memory_error='', overlaps=[], process=Mock(side_effect=speakers))
             request = {'model': 'haas-ja-v1.0', 'language': 'ja', 'device': {'name': 'test fixture'},
                        'live_diarize': True, 'live_noise': True, 'diarize': False, 'context_correct': False}
             with patch.object(engine, 'RESULTS', folder/'results'), patch.object(realtime, 'LoopbackCapture', Capture), \

@@ -33,7 +33,7 @@ def serve(folder,device):
     from transformers import WhisperForConditionalGeneration,WhisperProcessor
     if device == 'mps' and not torch.backends.mps.is_available():
         raise RuntimeError('Metalを利用できません。CPUで再試行します。')
-    torch.set_num_threads(min(8,max(1,(os.cpu_count() or 4)//2)))
+    torch.set_num_threads(min(8,max(1,int(os.environ.get('WHISPER_BACKGROUND_THREADS', (os.cpu_count() or 4)//2)))))
     if device=='cuda' and not torch.cuda.is_available():raise RuntimeError('CUDAを利用できません。')
     dtype=torch.float16 if device=='cuda' else torch.float32
     processor=WhisperProcessor.from_pretrained(folder,local_files_only=True,trust_remote_code=False)

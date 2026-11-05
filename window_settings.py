@@ -10,7 +10,7 @@ import tkinter as tk
 from overlay_preferences import display_areas, restored_position, preferences
 
 KEYS = {"main", "realtime", "comparison", "video_preview", "speaker_names", "speaker_memory", "voice_review",
-        "context_review", "dictionary", "history"}
+        "context_review", "dictionary", "history", "overlap_review"}
 
 
 def settings_path():

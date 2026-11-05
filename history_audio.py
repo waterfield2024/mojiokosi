@@ -34,6 +34,12 @@ def audio_source(data, folder):
 
 def playback_target(data, folder, row):
     start, end = utterance_interval(row)
+    if row.get('separated_audio'):
+        root = Path(folder).resolve()
+        source = (root / row['separated_audio']).resolve()
+        if source.is_relative_to(root / '.audio' / 'separated') and source.is_file():
+            offset = float(row.get('separated_offset', 0))
+            return source, (max(0., start-offset), max(.01, end-offset))
     source = audio_source(data, folder)
     if source.suffix.lower() == '.wav':
         try:
