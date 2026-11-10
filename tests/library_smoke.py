@@ -22,7 +22,7 @@ def main():
             rows = [dict(start=12*i, end=12*i+2, speaker='speaker_0', text=text) for i, text in enumerate(lines)]
             save_result(dict(title=title, segments=rows, speakers={'speaker_0': '佐藤'}), RESULTS / name)
 
-        save('20261010_091000_a', '以前の会議', ['前の発言です。', '京都で開催します。'])
+        save('20261010_091000_a', '以前の会議', ['医者に相談しました。', '京都で開催します。'])
         save('リアルタイム_20261020_143000_b', '今回の会議', ['京都を訪問します。'])
         root = tk.Tk()
         errors = []
@@ -48,7 +48,7 @@ def main():
             window.body.event_generate('<ButtonPress-1>', x=x+width//2, y=y+height//2)
             window.body.event_generate('<ButtonRelease-1>', x=x+width//2, y=y+height//2)
             root.update()
-            assert window.word.get() == '京都' and window.matches == [(1, 1)]
+            assert window.word.get() == '京都' and [(h.record, h.row) for h in window.matches] == [(1, 1)]
             window.hits.selection_set('0')
             root.update()
             window.jump.invoke()
@@ -57,7 +57,22 @@ def main():
             assert window.body.get('match.first', 'match.last') == '京都で開催します。'
             window.back.invoke()
             root.update()
-            assert window.heading.get() == '今回の会議' and window.matches == [(1, 1)]
+            assert window.heading.get() == '今回の会議' and [(h.record, h.row) for h in window.matches] == [(1, 1)]
+            window.word.set('医師')
+            window.search_button.invoke()
+            assert [(h.record, h.row, h.reason) for h in window.matches] == [(1, 0, '類義語')]
+            assert window.hits.set('0', '一致した語') == '医者（類義語）'
+            window.hits.selection_set('0')
+            root.update()
+            window.jump.invoke()
+            root.update()
+            assert window.body.get('match.first', 'match.last') == '医者に相談しました。'
+            window.back.invoke()
+            root.update()
+            assert window.word.get() == '医師' and len(window.matches) == 1
+            window.include_near.set(False)
+            window.search_button.invoke()
+            assert not window.matches
             with patch('tkinter.filedialog.askopenfilename', return_value=''):
                 window.open_file()
             assert window.winfo_viewable()

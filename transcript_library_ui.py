@@ -7,7 +7,8 @@ from tkinter import messagebox, ttk
 
 from engine import RESULTS, timestamp
 from result_media import result_file
-from transcript_library import index_nouns, load_records, noun_key, related_rows
+from noun_search import load_synsets, noun_key
+from transcript_library import index_nouns, load_records, search_nouns
 from ui_theme import palette, style_text
 
 
@@ -17,6 +18,10 @@ def scan_library(root, events, stop):
         events.put(('records', (records, skipped)))
         if records and not stop.is_set():
             from janome.tokenizer import Tokenizer
+            try:
+                events.put(('synsets', load_synsets()))
+            except (OSError, UnicodeError):
+                events.put(('dictionary_error', None))
             tokenizer = Tokenizer()
             for number, record in enumerate(records):
                 index = index_nouns(record, tokenizer, stop.is_set)
@@ -60,6 +65,10 @@ class TranscriptLibrary(tk.Toplevel):
         self.shared = set()
         self.error = None
         self.selected = self.key = None
+        self.query_text = ''
+        self.synsets = {}
+        self.dictionary_error = False
+        self.include_near = tk.BooleanVar(self, value=True)
         self.origin = self.focus_row = None
         self.matches = []
         self.offset = self.skipped = 0
@@ -105,11 +114,16 @@ class TranscriptLibrary(tk.Toplevel):
         right.add(related, weight=2)
         bar = ttk.Frame(related)
         bar.pack(fill='x')
-        ttk.Label(bar, text='名詞でほかの記録を探す').pack(side='left')
-        self.word = ttk.Combobox(bar, state='disabled', width=22)
+        ttk.Label(bar, text='検索語').pack(side='left')
+        self.word = ttk.Combobox(bar, state='disabled', width=14)
         self.word.pack(side='left', fill='x', expand=True, padx=(8, 0))
         self.word.bind('<<ComboboxSelected>>', self.pick_word)
-        self.note = tk.StringVar(value='本文の名詞をクリックするか、一覧から選んでください。')
+        self.word.bind('<Return>', self.pick_word)
+        self.search_button = ttk.Button(bar, text='検索', width=5, command=self.pick_word, state='disabled')
+        self.search_button.pack(side='left', padx=(4, 0))
+        ttk.Checkbutton(bar, text='近い言葉も含める', variable=self.include_near,
+                        command=self.pick_word).pack(side='left', padx=(6, 0))
+        self.note = tk.StringVar()
         ttk.Label(related, textvariable=self.note, style='Sub.TLabel').pack(anchor='w', pady=4)
         actions = ttk.Frame(related)
         actions.pack(side='bottom', fill='x', pady=(5, 0))
@@ -120,9 +134,9 @@ class TranscriptLibrary(tk.Toplevel):
         self.back = ttk.Button(actions, text='照合元に戻る', command=self.go_back)
         self.jump = ttk.Button(actions, text='該当する発言を表示', command=self.follow_hit, state='disabled')
         self.jump.pack(side='right')
-        self.hits = record_table(related, [('日付', 86), ('記録名', 115), ('時刻・話者', 120), ('発言', 200)], 5)
-        self.hits.bind('<<TreeviewSelect>>', lambda e: self.jump.configure(
-            state='normal' if self.hits.selection() else 'disabled'))
+        self.hits = record_table(related, [('日付', 80), ('記録名', 97), ('時刻・話者', 108),
+                                          ('一致した語', 140), ('発言', 170)], 5)
+        self.hits.bind('<<TreeviewSelect>>', self.show_selection)
         self.hits.bind('<Double-1>', self.follow_hit)
         self.hits.bind('<Return>', self.follow_hit)
         self.protocol('WM_DELETE_WINDOW', self.destroy)
@@ -166,6 +180,10 @@ class TranscriptLibrary(tk.Toplevel):
                 if i == self.selected:
                     self.set_words()
                 changed = True
+            elif kind == 'synsets':
+                self.synsets = payload
+            elif kind == 'dictionary_error':
+                self.dictionary_error = True
             elif kind == 'error':
                 self.done = True
                 self.error = payload
@@ -188,6 +206,8 @@ class TranscriptLibrary(tk.Toplevel):
                 message += f'　読み込めない結果を含むフォルダーが {self.skipped} 件あります。'
             if self.error:
                 message = f'読み込みを完了できませんでした。{self.error}'
+            if self.dictionary_error:
+                message += '　類義語辞書を読み込めませんでした。'
             self.status.set(message)
         if changed:
             self.update_matches(keep_selection=True)
@@ -203,6 +223,9 @@ class TranscriptLibrary(tk.Toplevel):
         if i == self.selected:
             return
         self.selected, self.key = i, None
+        self.query_text = ''
+        self.word.set('')
+        self.search_button.configure(state='normal')
         self.focus_row = None
         self.origin = None
         self.back.pack_forget()
@@ -227,8 +250,7 @@ class TranscriptLibrary(tk.Toplevel):
         index = self.indexes.get(self.selected)
         self.shared = {k for k in index.labels if self.counts[k] > 1} if index else set()
         values = [index.labels[k] for k in sorted(index.labels, key=lambda k: (-self.counts[k], k))] if index else []
-        self.word.configure(values=values, state='readonly' if values else 'disabled')
-        self.word.set(index.labels.get(self.key, '') if index else '')
+        self.word.configure(values=values, state='normal' if self.selected is not None else 'disabled')
 
     def pick_from_text(self, event):
         index = self.indexes.get(self.selected)
@@ -246,17 +268,25 @@ class TranscriptLibrary(tk.Toplevel):
             self.pick_word()
 
     def pick_word(self, event=None):
-        self.key = noun_key(self.word.get())
+        if self.selected is None:
+            return
+        self.query_text = self.word.get().strip()
+        self.key = noun_key(self.query_text)
         self.offset = 0
         self.update_matches()
 
     def update_matches(self, keep_selection=False):
         selection = self.hits.selection() if keep_selection else ()
-        self.matches = list(related_rows(self.records, self.indexes, self.selected, self.key)) if self.key else []
+        old = self.matches[int(selection[0])] if selection else None
+        self.matches = search_nouns(self.records, self.indexes, self.selected, self.key,
+                                    include_near=self.include_near.get(), synsets=self.synsets) if self.key else []
         self.offset = min(self.offset, max(0, (len(self.matches) - 1) // self.PAGE_SIZE * self.PAGE_SIZE))
         self.draw_hits()
-        if selection and self.hits.exists(selection[0]):
-            self.hits.selection_set(selection[0])
+        if old is not None:
+            for n, hit in enumerate(self.matches[self.offset:self.offset + self.PAGE_SIZE], self.offset):
+                if (hit.record, hit.row) == (old.record, old.row):
+                    self.hits.selection_set(str(n))
+                    break
 
     def page(self, step):
         self.offset += step * self.PAGE_SIZE
@@ -266,41 +296,54 @@ class TranscriptLibrary(tk.Toplevel):
         self.hits.delete(*self.hits.get_children())
         end = min(self.offset + self.PAGE_SIZE, len(self.matches))
         for n in range(self.offset, end):
-            i, row = self.matches[n]
-            record = self.records[i]
-            line = record.lines[row]
+            hit = self.matches[n]
+            record = self.records[hit.record]
+            line = record.lines[hit.row]
             self.hits.insert('', 'end', iid=str(n), values=(record.date.strftime('%Y/%m/%d'), record.title,
-                                                          timestamp(line.start) + ' ' + line.speaker, line.text))
+                             timestamp(line.start) + ' ' + line.speaker, self.hit_label(hit), line.text))
         self.jump.configure(state='disabled')
         self.prev.configure(state='normal' if self.offset else 'disabled')
         self.next.configure(state='normal' if end < len(self.matches) else 'disabled')
-        if self.matches:
+        self.show_selection()
+
+    def hit_label(self, hit):
+        line = self.records[hit.record].lines[hit.row].text
+        start, end = next((a, b) for a, b, key in self.indexes[hit.record].spans[hit.row] if key == hit.key)
+        return f'{line[start:end]}（{hit.reason}）'
+
+    def show_selection(self, event=None):
+        selection = self.hits.selection()
+        self.jump.configure(state='normal' if selection else 'disabled')
+        if selection:
+            hit = self.matches[int(selection[0])]
+            self.note.set(f'「{self.query_text}」の検索結果　{self.hit_label(hit)}')
+        elif self.matches:
+            end = min(self.offset + self.PAGE_SIZE, len(self.matches))
             self.note.set(f'{self.offset + 1}〜{end} / {len(self.matches)}件の発言')
         elif self.key:
             self.note.set('照合できた記録に一致する発言はありません。' if self.done else 'ほかの記録を照合中…')
-        elif self.selected in self.indexes and not self.indexes[self.selected].labels:
-            self.note.set('この記録からは名詞が見つかりませんでした。')
         else:
-            self.note.set('本文の名詞をクリックするか、一覧から選んでください。')
+            self.note.set('本文の名詞をクリックするか、検索語を入力してほかの記録を探せます。')
 
     def follow_hit(self, event=None):
         selected = self.hits.selection()
         if selected:
-            i, row = self.matches[int(selected[0])]
-            origin = self.selected, self.key, self.offset
-            self.choose_record(i)
-            self.origin, self.focus_row = origin, row
+            hit = self.matches[int(selected[0])]
+            origin = self.selected, self.query_text, self.offset, self.include_near.get()
+            self.choose_record(hit.record)
+            self.origin, self.focus_row = origin, hit.row
             self.back.pack(side='left', padx=4)
-            pos = f'{3 * row + 2}.0'
+            pos = f'{3 * hit.row + 2}.0'
             self.body.tag_remove('match', '1.0', 'end')
             self.body.tag_add('match', pos, pos + ' lineend')
             self.body.see(pos)
 
     def go_back(self):
-        i, key, offset = self.origin
+        i, query, offset, include_near = self.origin
         self.choose_record(i)
-        self.key, self.offset = key, offset
-        self.word.set(self.indexes[i].labels[key])
+        self.query_text, self.key, self.offset = query, noun_key(query), offset
+        self.include_near.set(include_near)
+        self.word.set(query)
         self.update_matches()
 
     def open_file(self):

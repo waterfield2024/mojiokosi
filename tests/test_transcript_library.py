@@ -5,7 +5,8 @@ import tempfile
 import unittest
 
 from janome.tokenizer import Tokenizer
-from transcript_library import index_nouns, load_records, noun_key, related_rows
+from noun_search import load_synsets, noun_key
+from transcript_library import index_nouns, load_records, related_rows, search_nouns
 
 
 class TranscriptLibraryTests(unittest.TestCase):
@@ -50,6 +51,33 @@ class TranscriptLibraryTests(unittest.TestCase):
         records, _ = load_records(self.root)
         self.assertEqual(records[0].path, original)
         self.assertEqual(len(records[0].lines), 2)
+
+    def test_synonym_order_and_deduplication_across_recordings(self):
+        self.save('20261021_000000_a', ['自動車'])
+        self.save('20261020_000000_b', ['車と乗用車を調べた。', '車も自動車も扱う。'])
+        self.save('20261019_000000_c', ['自動車。'])
+        records, _ = load_records(self.root)
+        indexes = {i: index_nouns(r, self.tokenizer) for i, r in enumerate(records)}
+        hits = search_nouns(records, indexes, 0, '自動車', include_near=True, synsets=load_synsets())
+        self.assertEqual([(h.record, h.row, h.reason) for h in hits],
+                         [(1, 1, '完全一致'), (2, 0, '完全一致'), (1, 0, '類義語')])
+        self.assertIn(hits[-1].key, {'車', '乗用車'})
+        self.assertEqual(len(search_nouns(records, indexes, 0, '自動車')), 2)
+
+    def test_spelling_reading_and_distinct_homophones(self):
+        self.save('20261021_000000_a', [])
+        self.save('20261020_000000_b', ['コンピュータを使う。', '林檎を食べる。', '政党の議論。', 'ＡＩで処理する。'])
+        records, _ = load_records(self.root)
+        indexes = {i: index_nouns(r, self.tokenizer) for i, r in enumerate(records)}
+        def query(term):
+            return [(h.row, h.reason) for h in search_nouns(records, indexes, 0, term,
+                    include_near=True, synsets=load_synsets())]
+        self.assertEqual(query('こんぴゅーたー'), [(0, '表記違い')])
+        self.assertEqual(query('りんご'), [(1, '同じ読み')])
+        self.assertEqual(query('正当'), [])
+        self.assertEqual(query('人工知能'), [(3, '類義語')])
+        self.assertEqual(query('  ai  '), [(3, '完全一致')])
+        self.assertEqual(query('  '), [])
 
     def test_live_corrections_are_used_in_body_and_index(self):
         path = self.save('live', ['東京を訪問した。'], mode='realtime')

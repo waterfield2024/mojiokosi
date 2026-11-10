@@ -7,10 +7,10 @@ import math
 from pathlib import Path
 import re
 import stat
-import unicodedata
 
 from result_media import result_file
 from speakers import speaker_name
+from noun_search import kana, noun_key, query_reading, same_written_stem, spelling, spelling_variant, synonyms, token_reading
 
 
 @dataclass(frozen=True)
@@ -121,10 +121,6 @@ def load_records(root, cancelled=lambda: False):
     return sorted(records, key=lambda r: (r.date, str(r.path)), reverse=True), skipped
 
 
-def noun_key(text):
-    return unicodedata.normalize('NFKC', text).casefold()
-
-
 # Normalize full-width Latin letters before tokenization without shifting character offsets.
 _WIDTH = str.maketrans({code: code - 0xFEE0 for code in range(0xFF01, 0xFF5F)})
 _NOUN_TYPES = {'固有名詞', '一般', 'サ変接続', '形容動詞語幹', '副詞可能', 'ナイ形容詞語幹'}
@@ -143,13 +139,17 @@ def noun_spans(text, tokenizer):
             starts.clear()
         end = start + len(token.surface)
         pos, subtype, *_ = token.part_of_speech.split(',')
-        if pos == '名詞' and subtype in _NOUN_TYPES and any(c.isalpha() for c in token.surface):
-            starts = [*starts[-3:], start]
-        elif pos != '名詞' or subtype != '接尾' or not starts:
+        standalone = pos == '名詞' and subtype in _NOUN_TYPES and any(c.isalpha() for c in token.surface)
+        if not standalone and not (pos == '名詞' and subtype == '接尾' and starts):
             starts.clear()
             continue
-        for first in starts:
-            yield first, end, text[first:end]
+        reading = token_reading(token)
+        prefixes = starts[-3:] if standalone else starts
+        starts = [(first, previous + reading if previous and reading else '') for first, previous in prefixes]
+        if standalone:
+            starts.append((start, reading))
+        for first, pronunciation in starts:
+            yield first, end, text[first:end], pronunciation
 
 
 @dataclass
@@ -157,6 +157,8 @@ class NounIndex:
     labels: dict
     rows: dict
     spans: list
+    forms: dict
+    readings: dict
 
     def at(self, row, offset, shared=()):
         matches = [(key in shared, end - start, key) for start, end, key in self.spans[row] if start <= offset < end]
@@ -165,18 +167,31 @@ class NounIndex:
 
 def index_nouns(record, tokenizer, cancelled=lambda: False):
     labels, rows, spans = {}, defaultdict(list), []
+    forms, readings = defaultdict(set), defaultdict(set)
     for number, line in enumerate(record.lines):
         if cancelled():
             return None
         found = []
-        for start, end, surface in noun_spans(line.text, tokenizer):
+        for start, end, surface, reading in noun_spans(line.text, tokenizer):
             key = noun_key(surface)
-            labels.setdefault(key, surface)
+            if key not in labels:
+                labels[key] = surface
+                forms[spelling_variant(key)].add(key)
+            if reading:
+                readings[reading].add(key)
             if not rows[key] or rows[key][-1] != number:
                 rows[key].append(number)
             found.append((start, end, key))
         spans.append(found)
-    return NounIndex(labels, dict(rows), spans)
+    return NounIndex(labels, dict(rows), spans, dict(forms), dict(readings))
+
+
+@dataclass(frozen=True)
+class NounHit:
+    record: int
+    row: int
+    key: str
+    reason: str
 
 
 def related_rows(records, indexes, selected, key):
@@ -184,3 +199,38 @@ def related_rows(records, indexes, selected, key):
         if record.session != records[selected].session and number in indexes:
             for row in indexes[number].rows.get(key, ()):
                 yield number, row
+
+
+def search_nouns(records, indexes, selected, key, *, include_near=False, synsets=None):
+    key = noun_key(key.strip())
+    if not key or not indexes:
+        return []
+    if not include_near:
+        return [NounHit(i, row, key, '完全一致') for i, row in related_rows(records, indexes, selected, key)]
+    form = spelling(key)
+    variant = spelling_variant(key)
+    reading = query_reading(key) if len(key) <= 128 else ''
+    equivalents = {spelling_variant(word) for word in synonyms(key, synsets or {})}
+    reasons = ('完全一致', '表記違い', '同じ読み', '類義語')
+    ranked = [[] for _ in reasons]
+    for number, record in enumerate(records):
+        if record.session == records[selected].session or number not in indexes:
+            continue
+        index = indexes[number]
+        candidates = {key: 0}
+        for word in index.forms.get(variant, ()):
+            candidates.setdefault(word, 1)
+        for word in index.readings.get(reading, ()):
+            if kana(form) or kana(spelling(word)) or same_written_stem(key, word):
+                candidates.setdefault(word, 2)
+        for equivalent in equivalents:
+            for word in index.forms.get(equivalent, ()):
+                candidates.setdefault(word, 3)
+        best = {}
+        for word, rank in sorted(candidates.items(), key=lambda item: (item[1], item[0])):
+            for row in index.rows.get(word, ()):
+                best.setdefault(row, (rank, word))
+        for row in sorted(best):
+            rank, word = best[row]
+            ranked[rank].append(NounHit(number, row, word, reasons[rank]))
+    return [hit for group in ranked for hit in group]
