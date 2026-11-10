@@ -151,16 +151,15 @@ class OrganizedReading(unittest.TestCase):
 
 class HistoryLiveControls(unittest.TestCase):
     def setUp(self):
-        from live_shortcut import LiveShortcut
-        from history_ui import HistoryWindow
+        from live_shortcut import LiveActionButton, LiveShortcut
         self.app = Mock(proc=None, operation=None, overlay=None, video_preview=None, data_transfer_active=False)
         self.app.root.tk.call.return_value = ''
         with patch('live_shortcut.GlobalHotkey'):
             self.controller = self.app.live_shortcut = LiveShortcut(self.app)
         self.panel = Mock(app=self.app, live_action=None)
-        self.panel.sync_live_action = lambda: HistoryWindow.sync_live_action(self.panel)
-        self.click = lambda: HistoryWindow.run_live_action(self.panel)
-        self.panel.sync_live_action()
+        self.panel.sync = lambda: LiveActionButton.sync(self.panel)
+        self.click = lambda: LiveActionButton.run_action(self.panel)
+        self.panel.sync()
 
     def test_stop_save_and_resume_without_registered_hotkey(self):
         self.assertEqual(self.panel.live_action, ('開始設定を開く', self.controller.open_settings))
@@ -168,14 +167,14 @@ class HistoryLiveControls(unittest.TestCase):
         self.app.live_stop_requested, self.app.live_phase = False, 'capturing'
         self.app.stop_live.side_effect = lambda: setattr(self.app, 'live_stop_requested', True)
         self.controller.started()
-        self.panel.sync_live_action()
+        self.panel.sync()
         self.click()
         self.click()
         self.app.stop_live.assert_called_once()
         self.assertEqual(self.panel.live_action, ('保存中…', None))
         self.assertFalse(self.controller.pending)
         self.app.proc = None
-        self.panel.sync_live_action()
+        self.panel.sync()
         self.assertEqual(self.panel.live_action, ('再開', self.controller.toggle))
         self.click()
         self.click()
@@ -186,16 +185,26 @@ class HistoryLiveControls(unittest.TestCase):
         self.app.operation, self.app.proc = 'realtime', object()
         self.app.live_stop_requested, self.app.live_phase = False, 'capturing'
         self.controller.started()
-        self.panel.sync_live_action()
+        self.panel.sync()
         self.app.live_stop_requested = True
         self.click()
         self.assertFalse(self.controller.pending)
         self.assertEqual(self.panel.live_action, ('保存中…', None))
         self.app.operation = 'transcribe'
-        self.panel.sync_live_action()
+        self.panel.sync()
         self.click()
         self.assertEqual(self.panel.live_action, ('再開', None))
         self.app.stop_live.assert_not_called()
+
+    def test_caption_button_fits_next_to_captions_on_secondary_monitor(self):
+        from overlay_preferences import control_position
+        area = {'rect': [-800, -100, 0, 500]}
+        for caption in [(-750, 300, 700, 100), (-800, -100, 700, 100),
+                        (-60, -100, 60, 600), (-800, -100, 40, 600)]:
+            x, y, w, h = caption
+            bx, by = control_position(*caption, 120, 30, area)
+            self.assertTrue(-800 <= bx <= -120 and -100 <= by <= 470)
+            self.assertTrue(bx + 120 <= x or bx >= x + w or by + 30 <= y or by >= y + h)
 
 
 class HistoryPreferences(unittest.TestCase):

@@ -4,6 +4,7 @@ import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
 from comparison_audio import PLAYBACK_SPEEDS
+from live_shortcut import LiveActionButton
 from transcript_history import LIMITS, match_spans, organized_paragraphs, row_key, select_page
 from ui_theme import palette, style_text
 
@@ -55,10 +56,8 @@ class HistoryWindow(tk.Toplevel):
         live = ttk.Frame(outer)
         live.grid(row=1, column=0, sticky='ew', pady=(4, 8))
         ttk.Label(live, text='リアルタイム文字起こし').pack(side='left')
-        self.live_action = None
-        self.live_button = ttk.Button(live, command=self.run_live_action)
+        self.live_button = LiveActionButton(live, app)
         self.live_button.pack(side='right')
-        self.sync_live_action()
         search = ttk.Frame(outer)
         search.grid(row=2, column=0, sticky='ew')
         ttk.Label(search, text='全文検索').pack(side='left', padx=(0, 6))
@@ -164,23 +163,6 @@ class HistoryWindow(tk.Toplevel):
         self.capture_excluded = exclude_window(self)
         app.window_settings.attach(self, 'history')
         self.refresh(reset=True)
-
-    def sync_live_action(self):
-        controller = self.app.live_shortcut
-        action = controller.history_action() if controller else ('準備中…', None)
-        if action != self.live_action:
-            self.live_action = action
-            label, command = action
-            self.live_button.configure(text=label, state='normal' if command else 'disabled')
-
-    def run_live_action(self):
-        shown = self.live_action
-        self.sync_live_action()
-        # A shortcut or a worker event may have changed the action since it was displayed.
-        _, command = self.live_action
-        if shown == self.live_action and command is not None:
-            command()
-            self.sync_live_action()
 
     def apply_colors(self):
         colors = palette(self)
@@ -582,7 +564,7 @@ class HistoryControls:
         self.history_visible.set(True)
         self.persist_live_recording_settings()
         self.window_settings.show('history', panel)
-        panel.sync_live_action()
+        panel.live_button.sync()
         panel.refresh()
         if focus:
             panel.focus_search()
@@ -607,7 +589,7 @@ class HistoryControls:
     def pump_history(self):
         if self.history_window and self.history_window.winfo_exists():
             if self.history_window.state() not in {'withdrawn', 'iconic'}:
-                self.history_window.sync_live_action()
+                self.history_window.live_button.sync()
                 if self.history_dirty:
                     self.history_window.refresh()
                     self.history_dirty = False

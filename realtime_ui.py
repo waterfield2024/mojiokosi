@@ -659,7 +659,7 @@ class RealtimeControls:
     def ensure_overlay(self):
         if not self.overlay or self.overlay.closed:
             from vertical_subtitles import DIRECTIONS
-            self.overlay = SubtitleOverlay(self.root, self.live_font.get(), extent=self.live_width.get(),
+            self.overlay = SubtitleOverlay(self.root, self.live_font.get(), app=self, extent=self.live_width.get(),
                 direction=DIRECTIONS[self.caption_direction.get()], vertical_position=self.vertical_position,
                 positions=self.live_overlay_settings["positions"], on_change=self.save_live_overlay,
                 visible=self.live_overlay_preview or self.live_show.get(), locked=False if self.live_overlay_preview else self.live_lock.get())

@@ -8,6 +8,38 @@ import time
 import tkinter as tk
 from tkinter import font as tkfont
 from speakers import speaker_name
+from live_shortcut import LiveActionButton
+
+
+def move_window(window, x, y):
+    """Place a borderless window at absolute desktop coordinates, including negative ones."""
+    window.update_idletasks()
+    if IS_MAC:
+        from mac_native import move_window as move_mac_window
+        move_mac_window(window, x, y)
+        return
+    from ctypes import wintypes as w
+    from window_settings import handle, native
+    move = native("SetWindowPos", w.BOOL, w.HWND, w.HWND, ctypes.c_int, ctypes.c_int,
+                  ctypes.c_int, ctypes.c_int, w.UINT)
+    if not move(handle(window), None, int(x), int(y), 0, 0, 0x15):
+        raise OSError("字幕の表示位置を変更できませんでした。")
+
+
+def set_click_through(window, locked):
+    window.update_idletasks()
+    if IS_MAC:
+        from mac_native import lock_overlay
+        lock_overlay(window, locked)
+        return
+    from ctypes import wintypes as w
+    from window_settings import handle, native
+    hwnd = handle(window)
+    style = native("GetWindowLongPtrW", ctypes.c_ssize_t, w.HWND, ctypes.c_int)(hwnd, -20)
+    style |= 0x80 | 0x08000000  # Tool window; don't take focus from the video.
+    style = style | 0x20 if locked else style & ~0x20
+    native("SetWindowLongPtrW", ctypes.c_ssize_t, w.HWND, ctypes.c_int, ctypes.c_ssize_t)(hwnd, -20, style)
+
 
 def wrap_pages(text, measure, width):
     lines, line = [], ""
@@ -23,7 +55,7 @@ def wrap_pages(text, measure, width):
 class SubtitleOverlay:
     KEY = "#010203"
     def __init__(self, root, font_size=32, *, extent=None, direction="horizontal",
-                 vertical_position="right", positions=None, on_change=None, visible=True, locked=False):
+                 vertical_position="right", positions=None, on_change=None, visible=True, locked=False, app=None):
         from overlay_preferences import preferences
         saved = preferences({"font_size": font_size, "extent": extent, "positions": positions or {}})
         if direction not in {"horizontal", "vertical"} or vertical_position not in {"left", "right"}:
@@ -43,6 +75,16 @@ class SubtitleOverlay:
             self.window.attributes("-transparentcolor", self.KEY)
         self.canvas = tk.Canvas(self.window, bg=self.KEY, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
+        self.control_window = None
+        if app is not None:
+            # Native click-through applies to an entire window. Only the button gets a hit target.
+            self.control_window = tk.Toplevel(self.window)
+            self.control_window.withdraw()
+            self.control_window.title("Whisper 字幕の操作")
+            self.control_window.overrideredirect(True)
+            self.control_window.attributes("-topmost", True)
+            self.live_button = LiveActionButton(self.control_window, app)
+            self.live_button.pack()
         self.font = tkfont.Font(family="Yu Gothic UI", size=font_size, weight="bold")
         self.direction = direction
         self.vertical_position = vertical_position
@@ -75,33 +117,18 @@ class SubtitleOverlay:
         self.window.update_idletasks()
         from screen_capture import exclude_window
         self.capture_excluded = exclude_window(self.window)
+        if self.control_window is not None:
+            self.capture_excluded = exclude_window(self.control_window) and self.capture_excluded
+            self.live_button.bind("<Configure>", lambda event: self.position_control())
         self.set_locked(self.locked)
         self.preview()
-        if self.visible:self.window.deiconify()
+        if self.visible:self.map_windows()
         self.tick()
 
     def set_locked(self, locked):
         if locked:self.finish_drag()
         self.locked = bool(locked)
-        self.window.update_idletasks()
-        if IS_MAC:
-            from mac_native import lock_overlay
-            lock_overlay(self.window, self.locked)
-            self.canvas.configure(cursor="" if locked else "fleur")
-            self.draw()
-            return
-        user = ctypes.windll.user32
-        user.GetParent.argtypes = [ctypes.c_void_p]
-        user.GetParent.restype = ctypes.c_void_p
-        hwnd = user.GetParent(self.window.winfo_id()) or self.window.winfo_id()
-        get_style = user.GetWindowLongPtrW
-        get_style.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        get_style.restype = ctypes.c_ssize_t
-        set_style = user.SetWindowLongPtrW
-        set_style.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
-        style = get_style(hwnd, -20) | 0x80 | 0x08000000  # tool window; never steal focus
-        style = style | 0x20 if self.locked else style & ~0x20
-        set_style(hwnd, -20, style)
+        set_click_through(self.window, self.locked)
         self.canvas.configure(cursor="" if locked else "fleur")
         self.draw()
 
@@ -140,24 +167,21 @@ class SubtitleOverlay:
                                                "rect": list(area["rect"]), "size": [self.width, self.height]}
 
     def move_to(self, x, y):
-        """Absolute desktop coordinates, including displays left/above the primary.
+        move_window(self.window, x, y)
+        self.window.update_idletasks()
+        self.position_control(x, y)
 
-        Tk's negative geometry offsets mean distance from the opposite edge.
-        SetWindowPos avoids confusing those offsets with negative desktop pixels.
-        """
-        self.window.update_idletasks()
-        if IS_MAC:
-            from mac_native import move_window
-            move_window(self.window, x, y)
+    def position_control(self, x=None, y=None):
+        if self.control_window is None or not self.visible or self.closed:
             return
-        user = ctypes.windll.user32
-        user.GetParent.argtypes = [ctypes.c_void_p];user.GetParent.restype = ctypes.c_void_p
-        hwnd = user.GetParent(self.window.winfo_id()) or self.window.winfo_id()
-        user.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
-                                      ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-        if not user.SetWindowPos(hwnd, None, int(x), int(y), 0, 0, 0x15):
-            raise OSError("字幕の表示位置を変更できませんでした。")
-        self.window.update_idletasks()
+        from overlay_preferences import closest_area, control_position, display_areas
+        if x is None:
+            x, y = self.window.winfo_x(), self.window.winfo_y()
+        area = closest_area(x, y, self.width, self.height, display_areas(self.root))
+        point = control_position(x, y, self.width, self.height, self.live_button.winfo_reqwidth(),
+                                 self.live_button.winfo_reqheight(), area)
+        if point != (self.control_window.winfo_x(), self.control_window.winfo_y()):
+            move_window(self.control_window, *point)
 
     def vertical_size(self):
         return max(8, round(abs(self.font.cget("size"))*self.root.winfo_fpixels("1p")))
@@ -484,6 +508,8 @@ class SubtitleOverlay:
     def tick(self):
         if self.closed:
             return
+        if self.visible and self.control_window is not None:
+            self.live_button.sync()
         now = time.monotonic()
         if self.notice and now >= self.notice_until:
             self.notice = ""
@@ -491,14 +517,24 @@ class SubtitleOverlay:
         self.advance(now)
         self.after_id = self.root.after(30, self.tick)
 
+    def map_windows(self):
+        self.window.deiconify()
+        self.window.attributes("-topmost", True)
+        if self.control_window is not None:
+            self.live_button.sync()
+            self.control_window.deiconify()
+            set_click_through(self.control_window, False)
+            self.position_control()
+
     def show(self, visible=True):
         self.visible = bool(visible)
         if visible:
             self.resize_box()
-            self.window.deiconify()
-            self.window.attributes("-topmost", True)
+            self.map_windows()
             self.set_locked(self.locked)
         else:
+            if self.control_window is not None:
+                self.control_window.withdraw()
             self.window.withdraw()
 
     def close(self):

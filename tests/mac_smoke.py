@@ -16,7 +16,7 @@ import tkinter as tk
 from app import App
 from live_shortcut import LiveShortcut
 from platform_support import IS_MAC, tool_path, torch_backends
-from mac_native import monitors, displays
+from mac_native import cocoa_window, monitors, displays
 from vertical_subtitles import font_at
 from video import caption_font, make_cues, write_ass
 
@@ -48,7 +48,20 @@ with patch.object(App, 'preload_live_models'), patch.object(App, 'schedule_live_
         root.update()
         assert root.winfo_viewable() and app.history_window.winfo_viewable()
         overlay = app.ensure_overlay()
+        overlay.show(True)
         overlay.set_locked(True)
+        root.update()
+        assert cocoa_window(overlay.window).ignoresMouseEvents()
+        assert not cocoa_window(overlay.control_window).ignoresMouseEvents()
+        assert overlay.live_button.winfo_viewable()
+        app.window_settings.hide('realtime')
+        overlay.live_button.invoke()
+        root.update()
+        assert app.live_window.winfo_viewable()
+        overlay.show(False)
+        root.update()
+        assert not overlay.control_window.winfo_viewable()
+        overlay.show(True)
         overlay.set_locked(False)
         app.theme_controller.set_mode('dark')
         root.update()

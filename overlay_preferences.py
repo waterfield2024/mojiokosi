@@ -75,6 +75,18 @@ def clamp_position(x, y, width, height, area):
     return (max(l, min(round(x), max(l, r-width))), max(t, min(round(y), max(t, b-height))))
 
 
+def control_position(x, y, width, height, button_width, button_height, area):
+    _, top, right, bottom = area['rect']
+    gap = 4
+    bx, by = x + width - button_width, y - button_height - gap
+    if by < top:
+        by = y + height + gap
+        if by + button_height > bottom:
+            by = y
+            bx = x + width + gap if x + width + gap + button_width <= right else x - button_width - gap
+    return clamp_position(bx, by, button_width, button_height, area)
+
+
 def restored_position(saved, width, height, area):
     old, new = saved["rect"], area["rect"]
     result = []

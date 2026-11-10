@@ -1,6 +1,32 @@
-"""Tk-thread stop/resume controller shared by the shortcut and history panel."""
+"""Tk-thread stop/resume controls for the shortcut, history and captions."""
 import time
+from tkinter import ttk
 from global_hotkey import GlobalHotkey, LABEL
+
+
+class LiveActionButton(ttk.Button):
+    def __init__(self, parent, app):
+        super().__init__(parent, command=self.run_action)
+        self.app = app
+        self.live_action = None
+        self.sync()
+
+    def sync(self):
+        controller = self.app.live_shortcut
+        action = controller.panel_action() if controller else ('準備中…', None)
+        if action != self.live_action:
+            self.live_action = action
+            label, command = action
+            self.configure(text=label, state='normal' if command else 'disabled')
+
+    def run_action(self):
+        shown = self.live_action
+        self.sync()
+        # Never execute a different action if another panel or the shortcut beat this click.
+        _, command = self.live_action
+        if shown == self.live_action and command is not None:
+            command()
+            self.sync()
 
 
 class LiveShortcut:
@@ -69,7 +95,7 @@ class LiveShortcut:
                     or (app.proc and app.operation != 'realtime')
                     or (app.video_preview and app.video_preview.winfo_exists()))
 
-    def history_action(self):
+    def panel_action(self):
         app = self.app
         if self.closed:
             return '終了中…', None
