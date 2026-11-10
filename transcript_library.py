@@ -9,6 +9,7 @@ import re
 import stat
 
 from result_media import result_file
+from history_audio import playback_target
 from speakers import speaker_name
 from noun_search import kana, noun_key, query_reading, same_written_stem, spelling, spelling_variant, synonyms, token_reading
 
@@ -18,6 +19,9 @@ class Utterance:
     start: float
     speaker: str
     text: str
+    end: float | None
+    separated_audio: str | None
+    separated_offset: float
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,23 @@ class Record:
     date: datetime
     title: str
     lines: tuple
+    media: dict
+
+
+def record_playback_target(root, record, row_index):
+    folder = record.path.parent
+    if not result_file(root, record.path.relative_to(root), {'.json'}):
+        raise FileNotFoundError('記録が移動または削除されています。保存した記録を開き直してください。')
+    line = record.lines[row_index]
+    row = {'start': line.start, 'end': line.end, 'separated_audio': line.separated_audio,
+           'separated_offset': line.separated_offset}
+    try:
+        return playback_target(record.media, folder, row)
+    except FileNotFoundError:
+        if folder == record.session:
+            raise
+        # A model comparison may keep its only copy of the recording in the parent.
+        return playback_target({}, record.session, {'start': line.start, 'end': line.end})
 
 
 def plain_directory(path):
@@ -75,11 +96,13 @@ def read_record(root, folder, session):
                 if not math.isfinite(start * 1000) or not isinstance(row['text'], str):
                     raise ValueError('発言の形式が正しくありません。')
                 lines.append(Utterance(max(0., start), speaker_name(row.get('speaker'), names),
-                                       ' '.join(row['text'].splitlines())))
+                                       ' '.join(row['text'].splitlines()), row.get('end'),
+                                       row.get('separated_audio'), row.get('separated_offset', 0)))
             title = str(data.get('title') or session.name)
             if folder != session and folder.name in ('whisper', 'granite'):
                 title += f'（{folder.name.title()}）'
-            record = Record(path, session, record_date(folder, original, path), title, tuple(lines))
+            media = {k: data[k] for k in ('audio_file', 'mode', 'recording_complete', 'source', 'source_mode') if k in data}
+            record = Record(path, session, record_date(folder, original, path), title, tuple(lines), media)
             # The editor can save a live checkpoint just as the worker finishes writing the full recording.
             if path == edited and original and data.get('mode') == 'realtime' and data.get('live_incomplete'):
                 fallback = record

@@ -6,9 +6,10 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from engine import RESULTS, timestamp
+from comparison_audio import ComparisonAudioPlayer
 from result_media import result_file
 from noun_search import load_synsets, noun_key
-from transcript_library import index_nouns, load_records, search_nouns
+from transcript_library import index_nouns, load_records, record_playback_target, search_nouns
 from ui_theme import palette, style_text
 
 
@@ -76,6 +77,7 @@ class TranscriptLibrary(tk.Toplevel):
         self.stop = threading.Event()
         self.events = queue.Queue()
         self.timer = None
+        self.audio_player = self.audio_generation = None
 
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill='both', expand=True)
@@ -86,7 +88,11 @@ class TranscriptLibrary(tk.Toplevel):
         self.edit = ttk.Button(header, text='メイン画面で編集', command=self.edit_record, state='disabled')
         self.edit.pack(side='right', padx=6)
         self.status = tk.StringVar(value='記録を読み込み中…')
-        ttk.Label(outer, textvariable=self.status, style='Sub.TLabel').pack(side='bottom', anchor='w', pady=(6, 0))
+        footer = ttk.Frame(outer)
+        footer.pack(side='bottom', fill='x', pady=(6, 0))
+        ttk.Label(footer, textvariable=self.status, style='Sub.TLabel').pack(side='left')
+        self.audio_status = tk.StringVar(self)
+        ttk.Label(footer, textvariable=self.audio_status, wraplength=510).pack(side='left', padx=8)
         panes = ttk.Panedwindow(outer, orient='horizontal')
         panes.pack(fill='both', expand=True)
         left = ttk.Frame(panes, padding=(0, 0, 6, 0))
@@ -134,9 +140,13 @@ class TranscriptLibrary(tk.Toplevel):
         self.back = ttk.Button(actions, text='照合元に戻る', command=self.go_back)
         self.jump = ttk.Button(actions, text='該当する発言を表示', command=self.follow_hit, state='disabled')
         self.jump.pack(side='right')
+        self.audio_stop = ttk.Button(actions, text='音声を停止', command=self.stop_audio, state='disabled')
+        self.audio_stop.pack(side='right', padx=4)
         self.hits = record_table(related, [('日付', 80), ('記録名', 97), ('時刻・話者', 108),
                                           ('一致した語', 140), ('発言', 170)], 5)
         self.hits.bind('<<TreeviewSelect>>', self.show_selection)
+        self.hits.bind('<ButtonRelease-1>', self.click_hit)
+        self.hits.bind('<space>', self.play_selected_hit)
         self.hits.bind('<Double-1>', self.follow_hit)
         self.hits.bind('<Return>', self.follow_hit)
         self.protocol('WM_DELETE_WINDOW', self.destroy)
@@ -155,6 +165,8 @@ class TranscriptLibrary(tk.Toplevel):
         if self.timer is not None:
             self.after_cancel(self.timer)
             self.timer = None
+        if self.audio_player is not None:
+            self.audio_player.close()
         super().destroy()
 
     def poll(self):
@@ -211,7 +223,8 @@ class TranscriptLibrary(tk.Toplevel):
             self.status.set(message)
         if changed:
             self.update_matches(keep_selection=True)
-        if not self.done:
+        self.poll_audio()
+        if not self.done or self.audio_generation is not None:
             self.timer = self.after(100, self.poll)
 
     def pick_record(self, event=None):
@@ -222,6 +235,7 @@ class TranscriptLibrary(tk.Toplevel):
     def choose_record(self, i):
         if i == self.selected:
             return
+        self.stop_audio()
         self.selected, self.key = i, None
         self.query_text = ''
         self.word.set('')
@@ -270,6 +284,7 @@ class TranscriptLibrary(tk.Toplevel):
     def pick_word(self, event=None):
         if self.selected is None:
             return
+        self.stop_audio()
         self.query_text = self.word.get().strip()
         self.key = noun_key(self.query_text)
         self.offset = 0
@@ -289,6 +304,7 @@ class TranscriptLibrary(tk.Toplevel):
                     break
 
     def page(self, step):
+        self.stop_audio()
         self.offset += step * self.PAGE_SIZE
         self.draw_hits()
 
@@ -319,14 +335,72 @@ class TranscriptLibrary(tk.Toplevel):
             self.note.set(f'「{self.query_text}」の検索結果　{self.hit_label(hit)}')
         elif self.matches:
             end = min(self.offset + self.PAGE_SIZE, len(self.matches))
-            self.note.set(f'{self.offset + 1}〜{end} / {len(self.matches)}件の発言')
+            self.note.set(f'{self.offset + 1}〜{end} / {len(self.matches)}件の発言　クリックで音声を再生')
         elif self.key:
             self.note.set('照合できた記録に一致する発言はありません。' if self.done else 'ほかの記録を照合中…')
         else:
             self.note.set('本文の名詞をクリックするか、検索語を入力してほかの記録を探せます。')
 
+    def click_hit(self, event):
+        if self.hits.identify_region(event.x, event.y) != 'cell':
+            return
+        row = self.hits.identify_row(event.y)
+        if row and row in self.hits.selection():
+            self.play_selected_hit()
+
+    def play_selected_hit(self, event=None):
+        selection = self.hits.selection()
+        if selection:
+            hit = self.matches[int(selection[0])]
+            self.stop_audio()
+            try:
+                if getattr(self.app, 'data_transfer_active', False):
+                    raise RuntimeError('更新・復元が終わってから再生してください。')
+                source, interval = record_playback_target(RESULTS, self.records[hit.record], hit.row)
+                if self.app.history_window:
+                    self.app.history_window.stop_audio()
+                if self.app.comparison_window:
+                    self.app.comparison_window.stop_comparison_audio()
+                if self.audio_player is None:
+                    self.audio_player = ComparisonAudioPlayer()
+                self.audio_generation = self.audio_player.play(source, [interval])
+                self.audio_stop.configure(state='normal')
+                self.audio_status.set('発言の音声を準備中…')
+                if self.timer is None:
+                    self.timer = self.after(50, self.poll)
+            except (OSError, RuntimeError, ValueError, TypeError, OverflowError) as exc:
+                self.stop_audio(f'再生できません：{exc}')
+        return 'break'
+
+    def stop_audio(self, message=''):
+        if self.audio_player is not None and self.audio_generation is not None:
+            self.audio_player.stop()
+        self.audio_generation = None
+        self.audio_stop.configure(state='disabled')
+        self.audio_status.set(message)
+
+    def poll_audio(self):
+        if self.audio_player is None:
+            return
+        while True:
+            try:
+                generation, state, value = self.audio_player.events.get_nowait()
+            except queue.Empty:
+                break
+            if generation != self.audio_generation:
+                continue
+            if state == 'playing':
+                self.audio_status.set('発言の音声を再生中…')
+            elif state == 'error':
+                self.stop_audio(f'再生できません：{value}')
+            elif state == 'ended':
+                self.stop_audio('もう一度クリックすると聞き直せます。')
+
     def follow_hit(self, event=None):
         selected = self.hits.selection()
+        if event is not None and event.num == 1:
+            if self.hits.identify_region(event.x, event.y) != 'cell' or self.hits.identify_row(event.y) not in selected:
+                return
         if selected:
             hit = self.matches[int(selected[0])]
             origin = self.selected, self.query_text, self.offset, self.include_near.get()

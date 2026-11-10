@@ -6,7 +6,7 @@ import unittest
 
 from janome.tokenizer import Tokenizer
 from noun_search import load_synsets, noun_key
-from transcript_library import index_nouns, load_records, related_rows, search_nouns
+from transcript_library import index_nouns, load_records, record_playback_target, related_rows, search_nouns
 
 
 class TranscriptLibraryTests(unittest.TestCase):
@@ -51,6 +51,37 @@ class TranscriptLibraryTests(unittest.TestCase):
         records, _ = load_records(self.root)
         self.assertEqual(records[0].path, original)
         self.assertEqual(len(records[0].lines), 2)
+
+    def test_playback_uses_matched_records_edited_interval_and_separated_track(self):
+        self.save('meeting', ['原文'])
+        path = self.save('meeting', ['修正後'], 'edited.json')
+        data = json.loads(path.read_text('utf8'))
+        data['segments'][0].update(start=10.5, end=11.25, separated_audio='.audio/separated/voice.wav',
+                                   separated_offset=10)
+        path.write_text(json.dumps(data), 'utf8')
+        track = path.parent / '.audio/separated/voice.wav'
+        track.parent.mkdir(parents=True)
+        track.touch()
+        mix = path.parent / '.audio/source.flac'
+        mix.touch()
+        record = load_records(self.root)[0][0]
+        self.assertEqual(record_playback_target(self.root, record, 0), (track.resolve(), (.5, 1.25)))
+        track.unlink()
+        self.assertEqual(record_playback_target(self.root, record, 0), (mix, (10.5, 11.25)))
+
+    def test_comparison_shared_playback_and_missing_media(self):
+        path = self.save('comparison/granite', ['京都'])
+        session = path.parent.parent
+        (session / 'comparison.json').write_text('{}', 'utf8')
+        shared = session / '.audio/source.flac'
+        shared.parent.mkdir()
+        shared.touch()
+        record = load_records(self.root)[0][0]
+        self.assertEqual(record_playback_target(self.root, record, 0), (shared, (0, 1)))
+        shared.unlink()
+        with self.assertRaises(FileNotFoundError):
+            record_playback_target(self.root, record, 0)
+        self.assertEqual(record.lines[0].text, '京都')
 
     def test_synonym_order_and_deduplication_across_recordings(self):
         self.save('20261021_000000_a', ['自動車'])
