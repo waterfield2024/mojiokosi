@@ -14,6 +14,7 @@ os.environ['WHISPER_USER_DATA_DIR'] = str(Path(data.name)/'UserData')
 os.environ['WHISPER_LEGACY_DATA_DIR'] = str(Path(data.name)/'legacy')
 import tkinter as tk
 from app import App
+from live_shortcut import LiveShortcut
 from platform_support import IS_MAC, tool_path, torch_backends
 from mac_native import monitors, displays
 from vertical_subtitles import font_at
@@ -30,11 +31,16 @@ root.report_callback_exception = lambda *args: errors.append(str(args))
 with patch.object(App, 'preload_live_models'), patch.object(App, 'schedule_live_preload'), patch.object(App, 'refresh_live_devices'):
     app = App(root)
     app.update_checker.close()
+    app.live_shortcut = LiveShortcut(app)
     try:
         assert displays() and monitors()
-        app.open_live()
         app.open_history()
         root.update()
+        panel = app.history_window
+        assert panel.live_button.cget('text') == '開始設定を開く'
+        panel.live_button.invoke()
+        root.update()
+        assert app.live_window.winfo_viewable()
         app.window_settings.remember('main', root)
         root.iconify()
         root.update()
@@ -49,10 +55,6 @@ with patch.object(App, 'preload_live_models'), patch.object(App, 'schedule_live_
         assert not app.live_noise.get()
         assert app.live_noise_check.instate(['disabled'])
         assert not errors, errors
-        from global_hotkey import GlobalHotkey
-        shortcut = GlobalHotkey(app.events)
-        root.update()
-        shortcut.close()
         app.window_settings.flush_all()
     finally:
         app.close()

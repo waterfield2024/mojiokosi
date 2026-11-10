@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -147,6 +147,55 @@ class OrganizedReading(unittest.TestCase):
                 source = rows(2)
                 source[1]['start'] = value
                 self.assertEqual(len(organized_paragraphs(source, {})), 2)
+
+
+class HistoryLiveControls(unittest.TestCase):
+    def setUp(self):
+        from live_shortcut import LiveShortcut
+        from history_ui import HistoryWindow
+        self.app = Mock(proc=None, operation=None, overlay=None, video_preview=None, data_transfer_active=False)
+        self.app.root.tk.call.return_value = ''
+        with patch('live_shortcut.GlobalHotkey'):
+            self.controller = self.app.live_shortcut = LiveShortcut(self.app)
+        self.panel = Mock(app=self.app, live_action=None)
+        self.panel.sync_live_action = lambda: HistoryWindow.sync_live_action(self.panel)
+        self.click = lambda: HistoryWindow.run_live_action(self.panel)
+        self.panel.sync_live_action()
+
+    def test_stop_save_and_resume_without_registered_hotkey(self):
+        self.assertEqual(self.panel.live_action, ('開始設定を開く', self.controller.open_settings))
+        self.app.operation, self.app.proc = 'realtime', object()
+        self.app.live_stop_requested, self.app.live_phase = False, 'capturing'
+        self.app.stop_live.side_effect = lambda: setattr(self.app, 'live_stop_requested', True)
+        self.controller.started()
+        self.panel.sync_live_action()
+        self.click()
+        self.click()
+        self.app.stop_live.assert_called_once()
+        self.assertEqual(self.panel.live_action, ('保存中…', None))
+        self.assertFalse(self.controller.pending)
+        self.app.proc = None
+        self.panel.sync_live_action()
+        self.assertEqual(self.panel.live_action, ('再開', self.controller.toggle))
+        self.click()
+        self.click()
+        self.assertTrue(self.controller.pending)
+        self.assertEqual(self.panel.live_action, ('再開を準備中…', None))
+
+    def test_stale_click_does_not_queue_resume_after_shortcut_stop(self):
+        self.app.operation, self.app.proc = 'realtime', object()
+        self.app.live_stop_requested, self.app.live_phase = False, 'capturing'
+        self.controller.started()
+        self.panel.sync_live_action()
+        self.app.live_stop_requested = True
+        self.click()
+        self.assertFalse(self.controller.pending)
+        self.assertEqual(self.panel.live_action, ('保存中…', None))
+        self.app.operation = 'transcribe'
+        self.panel.sync_live_action()
+        self.click()
+        self.assertEqual(self.panel.live_action, ('再開', None))
+        self.app.stop_live.assert_not_called()
 
 
 class HistoryPreferences(unittest.TestCase):

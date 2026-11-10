@@ -1,4 +1,4 @@
-"""Tk-thread stop/resume controller for the registered global shortcut."""
+"""Tk-thread stop/resume controller shared by the shortcut and history panel."""
 import time
 from global_hotkey import GlobalHotkey, LABEL
 
@@ -9,7 +9,7 @@ class LiveShortcut:
         self.pending = False
         self.refresh_needed = False
         self.waiting_for_stop = False
-        self.engaged = False
+        self.has_started = False
         self.closed = False
         self.available = False
         self.last_press = -float('inf')
@@ -31,13 +31,16 @@ class LiveShortcut:
         if app.overlay and not app.overlay.closed and app.overlay.visible:
             app.overlay.notify(text)
 
-    def reveal_settings(self, text):
+    def open_settings(self):
         app = self.app
         app.window_settings.show('main', app.root)
         if app.live_window and app.live_window.winfo_exists():
             app.window_settings.show('realtime', app.live_window)
         else:
             app.open_live()
+
+    def reveal_settings(self, text):
+        self.open_settings()
         self.announce(text)
 
     def handle(self, event):
@@ -61,14 +64,28 @@ class LiveShortcut:
 
     def blocked(self):
         app = self.app
-        return bool(getattr(app, 'data_transfer_active', False) or app.root.grab_current()
+        # A native combobox popup can own the grab without a Python widget.
+        return bool(getattr(app, 'data_transfer_active', False) or app.root.tk.call('grab', 'current', app.root)
                     or (app.proc and app.operation != 'realtime')
                     or (app.video_preview and app.video_preview.winfo_exists()))
+
+    def history_action(self):
+        app = self.app
+        if self.closed:
+            return '終了中…', None
+        if app.proc and app.operation == 'realtime':
+            if app.live_stop_requested or app.live_phase == 'finishing':
+                return ('保存後に再開予定' if self.pending else '保存中…'), None
+            return '停止して保存', self.toggle
+        if self.pending:
+            return '再開を準備中…', None
+        if self.has_started:
+            return '再開', None if self.blocked() else self.toggle
+        return '開始設定を開く', None if self.blocked() else self.open_settings
 
     def toggle(self):
         app = self.app
         if self.closed: return
-        self.engaged = True
         if self.pending:
             self.pending = False
             self.announce('再開予約を取り消しました。')
@@ -95,6 +112,7 @@ class LiveShortcut:
         self.announce('保存が終わったら再開します。もう一度押すと予約を取り消せます。' if app.proc else '再開を準備しています。')
 
     def started(self):
+        self.has_started = True
         self.pending = False
         self.waiting_for_stop = False
 
@@ -106,7 +124,7 @@ class LiveShortcut:
             if app.failed or app.cancelled:
                 self.pending = False
             if not self.pending:
-                self.announce(f'停止しました。{LABEL}で再開できます。')
+                self.announce(f'停止しました。{LABEL}で再開できます。' if self.available else '停止しました。')
         if not self.pending: return
         if self.blocked():
             self.pending = False

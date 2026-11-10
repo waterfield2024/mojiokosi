@@ -52,10 +52,16 @@ class HistoryWindow(tk.Toplevel):
         header.grid(row=0, column=0, sticky='ew')
         ttk.Label(header, text='文字起こし履歴', font=('Yu Gothic UI', 14, 'bold')).pack(side='left')
         ttk.Button(header, text='メイン画面を開く', command=app.open_main_from_history).pack(side='right')
-        ttk.Label(outer, text='今開いている結果の全文から検索', style='Sub.TLabel').grid(row=1, column=0, sticky='w', pady=(2, 8))
+        live = ttk.Frame(outer)
+        live.grid(row=1, column=0, sticky='ew', pady=(4, 8))
+        ttk.Label(live, text='リアルタイム文字起こし').pack(side='left')
+        self.live_action = None
+        self.live_button = ttk.Button(live, command=self.run_live_action)
+        self.live_button.pack(side='right')
+        self.sync_live_action()
         search = ttk.Frame(outer)
         search.grid(row=2, column=0, sticky='ew')
-        ttk.Label(search, text='検索').pack(side='left', padx=(0, 6))
+        ttk.Label(search, text='全文検索').pack(side='left', padx=(0, 6))
         self.search = ttk.Entry(search, textvariable=self.query)
         self.search.pack(side='left', fill='x', expand=True)
         ttk.Button(search, text='解除', width=5, command=lambda: self.query.set('')).pack(side='right', padx=(6, 0))
@@ -158,6 +164,23 @@ class HistoryWindow(tk.Toplevel):
         self.capture_excluded = exclude_window(self)
         app.window_settings.attach(self, 'history')
         self.refresh(reset=True)
+
+    def sync_live_action(self):
+        controller = self.app.live_shortcut
+        action = controller.history_action() if controller else ('準備中…', None)
+        if action != self.live_action:
+            self.live_action = action
+            label, command = action
+            self.live_button.configure(text=label, state='normal' if command else 'disabled')
+
+    def run_live_action(self):
+        shown = self.live_action
+        self.sync_live_action()
+        # A shortcut or a worker event may have changed the action since it was displayed.
+        _, command = self.live_action
+        if shown == self.live_action and command is not None:
+            command()
+            self.sync_live_action()
 
     def apply_colors(self):
         colors = palette(self)
@@ -559,6 +582,7 @@ class HistoryControls:
         self.history_visible.set(True)
         self.persist_live_recording_settings()
         self.window_settings.show('history', panel)
+        panel.sync_live_action()
         panel.refresh()
         if focus:
             panel.focus_search()
@@ -582,7 +606,9 @@ class HistoryControls:
 
     def pump_history(self):
         if self.history_window and self.history_window.winfo_exists():
-            if self.history_dirty and self.history_window.state() not in {'withdrawn', 'iconic'}:
-                self.history_window.refresh()
-                self.history_dirty = False
+            if self.history_window.state() not in {'withdrawn', 'iconic'}:
+                self.history_window.sync_live_action()
+                if self.history_dirty:
+                    self.history_window.refresh()
+                    self.history_dirty = False
             self.history_window.poll_audio()
