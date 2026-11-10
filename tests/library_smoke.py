@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 import tkinter as tk
 from unittest.mock import patch
@@ -65,30 +66,59 @@ def main():
                 window.hits.event_generate('<ButtonPress-1>', x=x+width//2, y=y+height//2)
                 window.hits.event_generate('<ButtonRelease-1>', x=x+width//2, y=y+height//2)
 
+            def select_speed(label):
+                window.audio_speed.set(label)
+                window.audio_speed.event_generate('<<ComboboxSelected>>')
+
+            def completed_pcm(output):
+                deadline = time.monotonic() + 10
+                while window.audio_generation is not None and time.monotonic() < deadline:
+                    root.update()
+                    time.sleep(.01)
+                assert window.audio_generation is None and '聞き直せます' in window.audio_status.get(), window.audio_status.get()
+                pcm = b''.join(call.args[0] for call in output.write.call_args_list)
+                output.write.reset_mock()
+                return pcm
+
             # Decode through the real player and FFmpeg, and capture its output before the hardware.
             with patch('comparison_audio.WaveOutput') as device:
                 device.RATE = 48000
                 device.return_value.pending = ()
                 device.return_value.position.return_value = 0
+                assert window.audio_speed.get() == '1倍'
+                assert tuple(window.audio_speed.cget('values')) == ('0.5倍', '0.75倍', '1倍', '1.25倍', '1.5倍')
                 click_result()
                 assert window.audio_generation is not None, window.audio_status.get()
-                deadline = time.monotonic() + 10
-                while window.audio_generation is not None and time.monotonic() < deadline:
-                    root.update()
-                    time.sleep(.01)
-                pcm = b''.join(call.args[0] for call in device.return_value.write.call_args_list)
-                assert pcm == expected, (len(pcm), window.audio_status.get())
-                assert window.audio_generation is None and '聞き直せます' in window.audio_status.get()
+                assert completed_pcm(device.return_value) == expected
+                select_speed('0.5倍')
+                assert window.audio_generation is None
                 window.hits.focus_force()
+                window.hits.event_generate('<space>')
+                slow_pcm = completed_pcm(device.return_value)
+                # atempo can round the last frame. Two seconds of speech should take about four.
+                assert 3.9 < len(slow_pcm) / (48000 * 4) < 4.1
+
+                # Keep playback active while the user selects another row with the keyboard.
+                release_output = threading.Event()
+                device.return_value.write.side_effect = lambda pcm: release_output.wait(3)
                 window.hits.event_generate('<space>')
                 first = window.audio_generation
                 assert first is not None
+                window.hits.selection_set('1')
+                select_speed('0.75倍')
+                restarted = window.audio_player.current
+                assert restarted.generation != first and restarted.intervals == [(12, 14)] and restarted.speed == .75
+                select_speed('0.75倍')
+                assert window.audio_generation == restarted.generation
                 click_result('1')
                 second = window.audio_player.current
-                assert second.generation == window.audio_generation and second.generation != first
-                assert second.intervals == [(24, 26)]
-                window.audio_player.events.put((first, 'error', 'stale event'))
+                assert second.generation == window.audio_generation and second.generation != restarted.generation
+                assert second.intervals == [(24, 26)] and second.speed == .75
+                window.audio_player.events.put((restarted.generation, 'error', 'stale event'))
+                window.poll_audio()
+                assert window.audio_generation == second.generation
                 window.audio_stop.invoke()
+                release_output.set()
                 assert second.done.wait(3) and window.audio_generation is None
                 window.poll_audio()
                 assert 'stale event' not in window.audio_status.get()
@@ -133,7 +163,7 @@ def main():
             assert not errors, errors
         finally:
             root.destroy()
-    print('Saved records, clicked utterance PCM, replay, stop, missing audio, navigation and edit: OK')
+    print('Saved records, clicked utterance, variable speed PCM, replay, stop, navigation and edit: OK')
 
 
 if __name__ == '__main__':

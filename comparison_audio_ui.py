@@ -4,7 +4,7 @@ import queue
 import tkinter as tk
 from tkinter import ttk
 
-from comparison_audio import PLAYBACK_SPEEDS,ComparisonAudioPlayer,comparison_audio_source,difference_intervals
+from comparison_audio import SPEED_LABELS,ComparisonAudioPlayer,comparison_audio_source,difference_intervals
 from comparison_audio_range import ComparisonRangeControls,audio_duration
 from engine import timestamp
 
@@ -32,7 +32,6 @@ class ComparisonAudioControls(ComparisonRangeControls):
         self.audio_repeat=tk.BooleanVar(value=False)
         self._audio_repeat_after=None;self._audio_pass=0
         self.audio_speed=tk.StringVar(value="1倍")
-        self._audio_speed_values={f"{speed:g}倍":speed for speed in PLAYBACK_SPEEDS}
         self._audio_playing_speed=1.0
         self.audio_button=ttk.Button(toolbar,text="この部分を再生",command=self.toggle_comparison_audio)
         self.audio_button.pack(side="right",padx=(8,8))
@@ -42,7 +41,7 @@ class ComparisonAudioControls(ComparisonRangeControls):
         speed_frame=ttk.Frame(toolbar);speed_frame.pack(side="right")
         ttk.Label(speed_frame,text="速度").pack(side="left",padx=(0,4))
         self.audio_speed_combo=ttk.Combobox(speed_frame,textvariable=self.audio_speed,
-                                          values=list(self._audio_speed_values),state="readonly",width=6)
+                                          values=list(SPEED_LABELS),state="readonly",width=6)
         self.audio_speed_combo.pack(side="left")
         self.audio_speed_combo.bind("<<ComboboxSelected>>",self.change_comparison_audio_speed)
 
@@ -71,7 +70,7 @@ class ComparisonAudioControls(ComparisonRangeControls):
         else:self.stop_comparison_audio()
 
     def change_comparison_audio_speed(self,event=None):
-        speed=self._audio_speed_values.get(self.audio_speed.get(),1.0)
+        speed=SPEED_LABELS.get(self.audio_speed.get(),1.0)
         if self._audio_generation is not None:
             if speed==self._audio_playing_speed:return
             cycle=self._audio_cycle_intervals
@@ -125,7 +124,7 @@ class ComparisonAudioControls(ComparisonRangeControls):
             self._audio_range_text=" / ".join(f"{timestamp(a)}〜{timestamp(b)}" for a,b in spans[:2])
             if len(spans)>2:self._audio_range_text+=f" ほか{len(spans)-2}区間"
             self._audio_target=(self.path,self.merge_index)
-            self._audio_playing_speed=self._audio_speed_values.get(self.audio_speed.get(),1.0)
+            self._audio_playing_speed=SPEED_LABELS.get(self.audio_speed.get(),1.0)
             self._audio_generation=self.comparison_player.play(source,spans,speed=self._audio_playing_speed)
             self._audio_pass=self._audio_pass+1 if repeating else 1
             detail="（クリック位置から）" if intervals is not None else "（指定した範囲）" if self._audio_cycle_intervals or self.merge_index in self._audio_ranges else "（前後1秒を含みます）"

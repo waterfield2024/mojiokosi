@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from engine import RESULTS, timestamp
-from comparison_audio import ComparisonAudioPlayer
+from comparison_audio import ComparisonAudioPlayer, SPEED_LABELS
 from result_media import result_file
 from noun_search import load_synsets, noun_key
 from transcript_library import index_nouns, load_records, record_playback_target, search_nouns
@@ -78,6 +78,8 @@ class TranscriptLibrary(tk.Toplevel):
         self.events = queue.Queue()
         self.timer = None
         self.audio_player = self.audio_generation = None
+        self.playing_hit = None
+        self.playing_speed = 1.0
 
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill='both', expand=True)
@@ -130,7 +132,14 @@ class TranscriptLibrary(tk.Toplevel):
         ttk.Checkbutton(bar, text='近い言葉も含める', variable=self.include_near,
                         command=self.pick_word).pack(side='left', padx=(6, 0))
         self.note = tk.StringVar()
-        ttk.Label(related, textvariable=self.note, style='Sub.TLabel').pack(anchor='w', pady=4)
+        result_bar = ttk.Frame(related)
+        result_bar.pack(fill='x', pady=4)
+        self.audio_speed = ttk.Combobox(result_bar, values=list(SPEED_LABELS), state='readonly', width=6)
+        self.audio_speed.set('1倍')
+        self.audio_speed.pack(side='right')
+        self.audio_speed.bind('<<ComboboxSelected>>', self.change_audio_speed)
+        ttk.Label(result_bar, text='再生速度').pack(side='right', padx=4)
+        ttk.Label(result_bar, textvariable=self.note, style='Sub.TLabel').pack(side='left')
         actions = ttk.Frame(related)
         actions.pack(side='bottom', fill='x', pady=(5, 0))
         self.prev = ttk.Button(actions, text='前へ', command=lambda: self.page(-1), state='disabled')
@@ -351,31 +360,41 @@ class TranscriptLibrary(tk.Toplevel):
     def play_selected_hit(self, event=None):
         selection = self.hits.selection()
         if selection:
-            hit = self.matches[int(selection[0])]
-            self.stop_audio()
-            try:
-                if getattr(self.app, 'data_transfer_active', False):
-                    raise RuntimeError('更新・復元が終わってから再生してください。')
-                source, interval = record_playback_target(RESULTS, self.records[hit.record], hit.row)
-                if self.app.history_window:
-                    self.app.history_window.stop_audio()
-                if self.app.comparison_window:
-                    self.app.comparison_window.stop_comparison_audio()
-                if self.audio_player is None:
-                    self.audio_player = ComparisonAudioPlayer()
-                self.audio_generation = self.audio_player.play(source, [interval])
-                self.audio_stop.configure(state='normal')
-                self.audio_status.set('発言の音声を準備中…')
-                if self.timer is None:
-                    self.timer = self.after(50, self.poll)
-            except (OSError, RuntimeError, ValueError, TypeError, OverflowError) as exc:
-                self.stop_audio(f'再生できません：{exc}')
+            self.play_hit(self.matches[int(selection[0])], SPEED_LABELS[self.audio_speed.get()])
         return 'break'
+
+    def change_audio_speed(self, event=None):
+        self.poll_audio()
+        speed = SPEED_LABELS[self.audio_speed.get()]
+        if self.playing_hit is not None and speed != self.playing_speed:
+            self.play_hit(self.playing_hit, speed)
+
+    def play_hit(self, hit, speed):
+        self.stop_audio()
+        try:
+            if getattr(self.app, 'data_transfer_active', False):
+                raise RuntimeError('更新・復元が終わってから再生してください。')
+            source, interval = record_playback_target(RESULTS, self.records[hit.record], hit.row)
+            if self.app.history_window:
+                self.app.history_window.stop_audio()
+            if self.app.comparison_window:
+                self.app.comparison_window.stop_comparison_audio()
+            if self.audio_player is None:
+                self.audio_player = ComparisonAudioPlayer()
+            self.audio_generation = self.audio_player.play(source, [interval], speed=speed)
+            self.playing_hit, self.playing_speed = hit, speed
+            self.audio_stop.configure(state='normal')
+            self.audio_status.set(f'発言の音声を準備中… {speed:g}倍速')
+            if self.timer is None:
+                self.timer = self.after(50, self.poll)
+        except (OSError, RuntimeError, ValueError, TypeError, OverflowError) as exc:
+            self.stop_audio(f'再生できません：{exc}')
 
     def stop_audio(self, message=''):
         if self.audio_player is not None and self.audio_generation is not None:
             self.audio_player.stop()
         self.audio_generation = None
+        self.playing_hit = None
         self.audio_stop.configure(state='disabled')
         self.audio_status.set(message)
 
@@ -390,7 +409,7 @@ class TranscriptLibrary(tk.Toplevel):
             if generation != self.audio_generation:
                 continue
             if state == 'playing':
-                self.audio_status.set('発言の音声を再生中…')
+                self.audio_status.set(f'発言の音声を再生中… {self.playing_speed:g}倍速')
             elif state == 'error':
                 self.stop_audio(f'再生できません：{value}')
             elif state == 'ended':

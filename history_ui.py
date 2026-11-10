@@ -3,12 +3,10 @@ from platform_support import IS_MAC
 import queue
 import tkinter as tk
 from tkinter import ttk, messagebox
-from comparison_audio import PLAYBACK_SPEEDS
+from comparison_audio import SPEED_LABELS
 from live_shortcut import LiveActionButton
 from transcript_history import LIMITS, match_spans, organized_paragraphs, row_key, select_page
 from ui_theme import palette, style_text
-
-SPEED_LABELS = {f'{speed:g}倍': speed for speed in PLAYBACK_SPEEDS}
 
 
 class HistoryWindow(tk.Toplevel):
