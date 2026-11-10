@@ -48,7 +48,10 @@ class HistoryWindow(tk.Toplevel):
         outer.pack(fill='both', expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(4, weight=1)
-        ttk.Label(outer, text='文字起こし履歴', font=('Yu Gothic UI', 14, 'bold')).grid(row=0, column=0, sticky='w')
+        header = ttk.Frame(outer)
+        header.grid(row=0, column=0, sticky='ew')
+        ttk.Label(header, text='文字起こし履歴', font=('Yu Gothic UI', 14, 'bold')).pack(side='left')
+        ttk.Button(header, text='メイン画面を開く', command=app.open_main_from_history).pack(side='right')
         ttk.Label(outer, text='今開いている結果の全文から検索', style='Sub.TLabel').grid(row=1, column=0, sticky='w', pady=(2, 8))
         search = ttk.Frame(outer)
         search.grid(row=2, column=0, sticky='ew')
@@ -521,6 +524,25 @@ class HistoryControls:
         self.history_limit, self.history_side = saved['limit'], saved['side']
         self.history_dirty = False
         self.root.bind('<Control-f>', lambda e: self.open_history(focus=True))
+        self.root.bind('<FocusOut>', self.on_main_focus_out, add='+')
+
+    def open_main_from_history(self):
+        self.history_window.attributes('-topmost', False)
+        self.window_settings.show('main', self.root)
+        self.root.focus_force()
+
+    def on_main_focus_out(self, event):
+        panel = self.history_window
+        if panel and panel.winfo_exists() and not panel.attributes('-topmost'):
+            self.root.after_idle(self.pin_history_if_main_inactive)
+
+    def pin_history_if_main_inactive(self):
+        panel = self.history_window
+        if panel and panel.winfo_exists():
+            # Tk also reports focus changes between controls inside the editor.
+            focus = self.root.tk.call('focus', '-displayof', self.root)
+            if not focus or str(self.root.tk.call('winfo', 'toplevel', focus)) != str(self.root):
+                panel.attributes('-topmost', True)
 
     def ensure_history(self):
         if self.history_window is None or not self.history_window.winfo_exists():
