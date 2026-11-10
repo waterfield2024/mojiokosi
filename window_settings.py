@@ -9,7 +9,7 @@ import tkinter as tk
 
 from overlay_preferences import display_areas, restored_position, preferences
 
-KEYS = {"main", "realtime", "comparison", "video_preview", "speaker_names", "speaker_memory", "voice_review",
+KEYS = {"main", "realtime", "comparison", "video_preview", "speaker_names", "speaker_memory", "voice_review", "library",
         "context_review", "dictionary", "history", "overlap_review"}
 
 

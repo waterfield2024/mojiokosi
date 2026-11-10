@@ -130,7 +130,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         source_box.grid(row=1, column=0, sticky="ew")
         source_heading = section_title(source_box, "01", "動画・音声を選ぶ")
         source_heading.pack(fill="x", pady=(0, 9))
-        self.open_button = ttk.Button(source_heading, text="以前の結果を開く", command=self.load_saved)
+        from transcript_library_ui import open_library
+        self.open_button = ttk.Button(source_heading, text="保存した記録", command=lambda: open_library(self))
         self.open_button.pack(side="right", padx=(16, 0))
         self.mode = tk.StringVar(value="youtube")
         radios = ttk.Frame(source_heading)
@@ -336,13 +337,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             self.editor.configure(state="disabled")
 
     def display_result(self, path):
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if (data.get("mode") == "realtime" and Path(path).name in {"result.json", "edited.json"}
-                and data.get("diarization", {}).get("engine") in (None, "sherpa-onnx/streaming")):
-            from live_speakers import apply_live_edits
-            apply_live_edits(data, Path(path).parent)
-        if not isinstance(data.get("segments"), list):
-            raise ValueError("このアプリの結果ファイルではありません。")
+        from transcript_library import read_transcript
+        data = read_transcript(path)
         clean = []
         for s in data["segments"]:
             clean.append({**s, "start": max(0, float(s["start"])), "end": float(s["end"]), "text": str(s["text"])})
@@ -763,9 +759,9 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         folder.mkdir(parents=True, exist_ok=True)
         open_path(folder)
 
-    def load_saved(self):
+    def load_saved(self, parent=None):
         self.commit()
-        name = filedialog.askopenfilename(title="保存済みの結果・比較結果（comparison.json）を開く",
+        name = filedialog.askopenfilename(parent=parent or self.root, title="保存済みの結果・比較結果（comparison.json）を開く",
                                          initialdir=str(RESULTS), filetypes=[("文字起こし結果", "*.json")])
         if name:
             try:
@@ -776,8 +772,10 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
                 else:
                     self.display_result(name)
                     self.stage = "保存済みの結果を開きました。"
+                return True
             except Exception as exc:
-                messagebox.showerror("開けません", str(exc))
+                messagebox.showerror("開けません", str(exc), parent=parent or self.root)
+        return False
 
     def help(self):
         messagebox.showinfo("使い方",

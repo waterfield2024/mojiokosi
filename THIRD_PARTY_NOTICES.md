@@ -10,6 +10,7 @@ The URL and SHA-256 are pinned from https://www.python.org/ftp/python/index-wind
 | Component | Source / license |
 | --- | --- |
 | Python 3.12 | https://www.python.org/ — PSF |
+| Janome 0.5.1 (Japanese noun extraction) | https://github.com/mocobeta/janome — Apache-2.0, with the bundled IPADIC dictionary notices |
 | PyTorch 2.14.1 / TorchAudio 2.11.1 | https://pytorch.org/ — BSD-style; CUDA dependencies have NVIDIA terms |
 | Transformers and Hugging Face libraries | https://github.com/huggingface/transformers — Apache-2.0 and component licenses |
 | Whisper models | https://github.com/openai/whisper — MIT; pinned Hugging Face revisions in `whisper_hf_manifest.json` |

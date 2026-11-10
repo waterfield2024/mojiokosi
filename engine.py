@@ -107,7 +107,8 @@ def save_result(result, folder):
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "transcript.txt").write_text(transcript_file_text(result["segments"], result.get("speakers")), encoding="utf-8-sig")
     (folder / "transcript.srt").write_text(subtitle_text(result["segments"], result.get("speakers")), encoding="utf-8-sig")
-    (folder / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    from context_ai import write_json
+    write_json(folder / "result.json", result)
 
 
 def get_youtube_media(url, job, video=False):
