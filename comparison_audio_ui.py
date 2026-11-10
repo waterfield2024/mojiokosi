@@ -4,11 +4,9 @@ import queue
 import tkinter as tk
 from tkinter import ttk
 
-from comparison_audio import SPEED_LABELS,ComparisonAudioPlayer,comparison_audio_source,difference_intervals
+from comparison_audio import REPEAT_PAUSE_MS,SPEED_LABELS,ComparisonAudioPlayer,comparison_audio_source,difference_intervals
 from comparison_audio_range import ComparisonRangeControls,audio_duration
 from engine import timestamp
-
-REPEAT_PAUSE_MS=350
 
 
 def seek_audio_intervals(spans,position,duration):

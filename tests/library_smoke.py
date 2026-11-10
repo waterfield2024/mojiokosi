@@ -70,12 +70,16 @@ def main():
                 window.audio_speed.set(label)
                 window.audio_speed.event_generate('<<ComboboxSelected>>')
 
-            def completed_pcm(output):
+            def wait_for(predicate):
                 deadline = time.monotonic() + 10
-                while window.audio_generation is not None and time.monotonic() < deadline:
+                while not predicate() and time.monotonic() < deadline and not errors:
                     root.update()
                     time.sleep(.01)
-                assert window.audio_generation is None and '聞き直せます' in window.audio_status.get(), window.audio_status.get()
+                assert not errors and predicate(), (errors, window.audio_status.get())
+
+            def completed_pcm(output):
+                wait_for(lambda: window.audio_generation is None)
+                assert '聞き直せます' in window.audio_status.get(), window.audio_status.get()
                 pcm = b''.join(call.args[0] for call in output.write.call_args_list)
                 output.write.reset_mock()
                 return pcm
@@ -86,6 +90,7 @@ def main():
                 device.return_value.pending = ()
                 device.return_value.position.return_value = 0
                 assert window.audio_speed.get() == '1倍'
+                assert not window.audio_repeat.get()
                 assert tuple(window.audio_speed.cget('values')) == ('0.5倍', '0.75倍', '1倍', '1.25倍', '1.5倍')
                 click_result()
                 assert window.audio_generation is not None, window.audio_status.get()
@@ -98,6 +103,37 @@ def main():
                 # atempo can round the last frame. Two seconds of speech should take about four.
                 assert 3.9 < len(slow_pcm) / (48000 * 4) < 4.1
 
+                passes_before = device.call_count
+                window.repeat_check.invoke()
+                assert window.playing_hit is None
+                window.hits.event_generate('<space>')
+                window.hits.selection_set('1')
+                wait_for(lambda: device.call_count >= passes_before + 2 and window.repeat_timer is not None)
+                pcm = b''.join(call.args[0] for call in device.return_value.write.call_args_list)
+                assert pcm == slow_pcm * 2
+                select_speed('0.75倍')
+                changed = window.audio_player.current
+                assert changed.intervals == [(12, 14)] and changed.speed == .75
+                wait_for(lambda: window.repeat_timer is not None)
+                pending = window.repeat_timer
+                click_result('1')
+                assert pending not in root.tk.call('after', 'info')
+                next_hit = window.audio_player.current
+                wait_for(lambda: window.repeat_timer is not None and window.audio_player.current is not next_hit)
+                assert window.audio_player.current.intervals == [(24, 26)] and window.audio_player.current.speed == .75
+                pending = window.repeat_timer
+                window.repeat_check.invoke()
+                assert pending not in root.tk.call('after', 'info') and window.playing_hit is None
+                window.repeat_check.invoke()
+                window.hits.event_generate('<space>')
+                wait_for(lambda: window.repeat_timer is not None)
+                pending = window.repeat_timer
+                window.audio_stop.invoke()
+                assert window.playing_hit is None and pending not in root.tk.call('after', 'info')
+                assert window.audio_player.current is None
+                window.hits.selection_set('0')
+                select_speed('0.5倍')
+
                 # Keep playback active while the user selects another row with the keyboard.
                 release_output = threading.Event()
                 device.return_value.write.side_effect = lambda pcm: release_output.wait(3)
@@ -108,6 +144,8 @@ def main():
                 select_speed('0.75倍')
                 restarted = window.audio_player.current
                 assert restarted.generation != first and restarted.intervals == [(12, 14)] and restarted.speed == .75
+                window.repeat_check.invoke()
+                assert not window.audio_repeat.get() and window.audio_generation == restarted.generation
                 select_speed('0.75倍')
                 assert window.audio_generation == restarted.generation
                 click_result('1')
@@ -163,7 +201,7 @@ def main():
             assert not errors, errors
         finally:
             root.destroy()
-    print('Saved records, clicked utterance, variable speed PCM, replay, stop, navigation and edit: OK')
+    print('Saved records, variable-speed repeat PCM, target switching, stop, navigation and edit: OK')
 
 
 if __name__ == '__main__':

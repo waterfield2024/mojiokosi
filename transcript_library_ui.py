@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from engine import RESULTS, timestamp
-from comparison_audio import ComparisonAudioPlayer, SPEED_LABELS
+from comparison_audio import ComparisonAudioPlayer, REPEAT_PAUSE_MS, SPEED_LABELS
 from result_media import result_file
 from noun_search import load_synsets, noun_key
 from transcript_library import index_nouns, load_records, record_playback_target, search_nouns
@@ -80,6 +80,8 @@ class TranscriptLibrary(tk.Toplevel):
         self.audio_player = self.audio_generation = None
         self.playing_hit = None
         self.playing_speed = 1.0
+        self.repeat_timer = None
+        self.audio_repeat = tk.BooleanVar(self, value=False)
 
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill='both', expand=True)
@@ -134,6 +136,9 @@ class TranscriptLibrary(tk.Toplevel):
         self.note = tk.StringVar()
         result_bar = ttk.Frame(related)
         result_bar.pack(fill='x', pady=4)
+        self.repeat_check = ttk.Checkbutton(result_bar, text='繰り返し', variable=self.audio_repeat,
+                                            command=self.change_audio_repeat)
+        self.repeat_check.pack(side='right', padx=(6, 0))
         self.audio_speed = ttk.Combobox(result_bar, values=list(SPEED_LABELS), state='readonly', width=6)
         self.audio_speed.set('1倍')
         self.audio_speed.pack(side='right')
@@ -171,6 +176,7 @@ class TranscriptLibrary(tk.Toplevel):
 
     def destroy(self):
         self.stop.set()
+        self.stop_audio()
         if self.timer is not None:
             self.after_cancel(self.timer)
             self.timer = None
@@ -369,6 +375,14 @@ class TranscriptLibrary(tk.Toplevel):
         if self.playing_hit is not None and speed != self.playing_speed:
             self.play_hit(self.playing_hit, speed)
 
+    def change_audio_repeat(self):
+        if not self.audio_repeat.get() and self.repeat_timer is not None:
+            self.stop_audio('繰り返しを終了しました。')
+
+    def replay_hit(self):
+        self.repeat_timer = None
+        self.play_hit(self.playing_hit, self.playing_speed)
+
     def play_hit(self, hit, speed):
         self.stop_audio()
         try:
@@ -391,7 +405,10 @@ class TranscriptLibrary(tk.Toplevel):
             self.stop_audio(f'再生できません：{exc}')
 
     def stop_audio(self, message=''):
-        if self.audio_player is not None and self.audio_generation is not None:
+        if self.repeat_timer is not None:
+            self.after_cancel(self.repeat_timer)
+            self.repeat_timer = None
+        if self.playing_hit is not None:
             self.audio_player.stop()
         self.audio_generation = None
         self.playing_hit = None
@@ -412,6 +429,10 @@ class TranscriptLibrary(tk.Toplevel):
                 self.audio_status.set(f'発言の音声を再生中… {self.playing_speed:g}倍速')
             elif state == 'error':
                 self.stop_audio(f'再生できません：{value}')
+            elif state == 'ended' and self.audio_repeat.get():
+                self.audio_generation = None
+                self.repeat_timer = self.after(REPEAT_PAUSE_MS, self.replay_hit)
+                self.audio_status.set(f'同じ発言をもう一度再生します… {self.playing_speed:g}倍速')
             elif state == 'ended':
                 self.stop_audio('もう一度クリックすると聞き直せます。')
 

@@ -13,6 +13,7 @@ from preview_audio import WaveOutput
 
 PLAYBACK_SPEEDS=(0.5,0.75,1.0,1.25,1.5)
 SPEED_LABELS = {f'{speed:g}倍': speed for speed in PLAYBACK_SPEEDS}
+REPEAT_PAUSE_MS = 350
 
 
 def _word_range(row,first,last):
