@@ -40,7 +40,9 @@ def playback_target(data, folder, row):
         source = result_file(root, row['separated_audio'], {'.wav'})
         if source and source.is_relative_to(root / '.audio' / 'separated'):
             offset = float(row.get('separated_offset', 0))
-            return source, (max(0., start-offset), max(.01, end-offset))
+            # Expand Windows short names in the selected folder only after the link checks.
+            recording = root.resolve() / source.relative_to(root)
+            return recording, (max(0., start-offset), max(.01, end-offset))
     source = audio_source(data, folder)
     if source.suffix.lower() == '.wav':
         try:
