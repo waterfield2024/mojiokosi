@@ -40,9 +40,10 @@ def read_comparison(path):
 
 
 def result_path(path,side):
-    base = Path(path).resolve().parent
-    target = (base/side/"result.json").resolve()
-    if side not in SIDES or not target.is_relative_to(base):raise ValueError("結果の保存先が不正です。")
+    from result_media import result_file
+    target = result_file(Path(path).parent, Path(side) / "result.json", {".json"}) if side in SIDES else None
+    if not target:
+        raise ValueError("比較フォルダー内にモデルの結果が見つかりません。")
     return target
 
 

@@ -12,8 +12,9 @@ EDITS_FILE = "live_speaker_edits.json"
 
 def apply_live_edits(data, folder):
     """Separate UI edits from worker checkpoints so neither writer loses the other."""
-    path = Path(folder) / EDITS_FILE
-    if not path.is_file():
+    from result_media import result_file
+    path = result_file(folder, EDITS_FILE, {".json"})
+    if path is None:
         return data
     edits = json.loads(path.read_text("utf-8"))
     from overlap import set_state

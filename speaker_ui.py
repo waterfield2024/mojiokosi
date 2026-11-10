@@ -271,12 +271,15 @@ class SpeakerControls:
                 remote = True
             except ValueError:
                 remote = False
-            if not (cached and Path(cached).is_file()) and not remote and not Path(source).is_file():
+            from result_media import MEDIA_EXTENSIONS, result_file
+            selected = None
+            local = result_file(self.result_path.parent, source, MEDIA_EXTENSIONS)
+            if not cached and not remote and not local:
                 source = filedialog.askopenfilename(title="同じ開始位置・長さの元の音声または動画を選ぶ")
                 if not source:
                     return
-                data["source"] = source
-            self.launch_worker({"operation": "diarize", "result": data,
+                data["source"] = selected = source
+            self.launch_worker({"operation": "diarize", "result": data, "selected_source": selected,
                                 "result_folder": str(self.result_path.parent),
                                 "num_speakers": self.speaker_count()})
         except Exception as exc:

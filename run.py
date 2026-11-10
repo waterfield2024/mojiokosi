@@ -2,7 +2,6 @@
 import argparse
 import importlib.metadata
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -22,6 +21,7 @@ def check_environment():
         import windows_capture
     import sherpa_onnx
     import torch
+    import torchaudio
     import transformers
     import yt_dlp
     import einops
@@ -36,7 +36,7 @@ def check_environment():
         if not (ROOT / 'models/speakers' / name).is_file():
             raise RuntimeError('Speaker models are missing. Run setup again.')
     print(json.dumps({'python': sys.version.split()[0], 'torch': torch.__version__,
-                      'cuda_available': torch.cuda.is_available(), 'mps_available': torch.backends.mps.is_available(), 'transformers': transformers.__version__,
+                      'torchaudio': torchaudio.__version__, 'cuda_available': torch.cuda.is_available(), 'mps_available': torch.backends.mps.is_available(), 'transformers': transformers.__version__,
                       'ffmpeg_subtitles': True, 'speaker_models': True}, indent=2), flush=True)
 
 

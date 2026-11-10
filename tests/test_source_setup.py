@@ -56,9 +56,16 @@ class Downloads(unittest.TestCase):
 
 
 class SourceRecognition(unittest.TestCase):
+    def test_blocked_cpu_dll_uses_official_cpu_capable_build(self):
+        with patch.object(setup_local, 'install_torch_wheel') as install, patch.object(setup_local, 'run') as run:
+            with patch.object(setup_local.subprocess, 'run', return_value=Mock(returncode=1, stderr=b'[WinError 4551]')):
+                self.assertTrue(setup_local.install_torch('python', 'cpu'))
+            self.assertEqual(install.call_args.args, ('python', setup_local.torch_packages('cpu', cpu_compat=True)[0]))
+            self.assertEqual(run.call_args.kwargs['env']['CUDA_VISIBLE_DEVICES'], '-1')
+
     def test_device_switch_uses_distinct_wheel_build(self):
-        self.assertEqual(setup_local.torch_packages('cpu'), ['torch==2.11.0+cpu', 'torchaudio==2.11.0+cpu'])
-        self.assertEqual(setup_local.torch_packages('cuda'), ['torch==2.11.0+cu128', 'torchaudio==2.11.0+cu128'])
+        self.assertEqual(setup_local.torch_packages('cpu'), [f'torch=={setup_local.TORCH_VERSION}+cpu', f'torchaudio=={setup_local.TORCHAUDIO_VERSION}+cpu'])
+        self.assertEqual(setup_local.torch_packages('cuda'), [f'torch=={setup_local.TORCH_VERSION}+cu130', f'torchaudio=={setup_local.TORCHAUDIO_VERSION}+cu132'])
 
     def test_file_skips_native_model_when_not_installed(self):
         with patch.object(asr, 'native_backends', return_value=[]), patch.object(asr, 'ensure_model') as native:

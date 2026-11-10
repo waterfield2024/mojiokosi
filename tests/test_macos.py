@@ -12,6 +12,14 @@ import mac_audio
 
 
 class PlatformRouting(unittest.TestCase):
+    def test_update_helper_upgrades_existing_outdated_homebrew_tool(self):
+        import setup_mac
+        with patch.object(setup_mac, 'current_media_tool', side_effect=[False, True, True]), \
+             patch.object(setup_mac.subprocess, 'run', return_value=Mock(stdout=b'ffmpeg-full 7.1\n')), \
+             patch('setup_local.run') as install:
+            setup_mac.ensure_media_tools()
+        install.assert_called_once_with(['/opt/homebrew/bin/brew', 'upgrade', 'ffmpeg-full'])
+
     def test_mac_uses_separate_environment_and_never_windows_tool(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(platform, 'IS_MAC', True):
             root = Path(folder)

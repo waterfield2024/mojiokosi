@@ -19,9 +19,12 @@ import urllib.request
 import venv
 
 ROOT = Path(__file__).resolve().parent
-TORCH_VERSION = '2.11.0'
-NODE_VERSION = '24.19.0'
-NODE_SHA256 = '3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237'
+TORCH_VERSION = '2.14.1'
+TORCHAUDIO_VERSION = '2.11.1'
+FFMPEG_WHEEL_FILE = 'imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v9.0.2.exe'
+FFMPEG_SHA256 = '3256173f3f8bffd7df12227c68adf68025edb1832273a9530688a7bb1ed8edec'
+NODE_VERSION = '24.22.2'
+NODE_SHA256 = '1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9'
 SEGMENTATION_SHA256 = '220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079'
 SPEAKER_RELEASE = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/'
 SETUP_INPUTS = ('setup_local.py', 'run.py', 'portable_runtime.py', 'requirements.txt', 'requirements-lock.txt',
@@ -69,7 +72,8 @@ def setup_ready(root=ROOT):
             return False
         if state['device'] not in ('cuda', 'cpu'):
             return False
-        expected = torch_packages(state['device'])
+        cpu_compat = state['device'] == 'cpu' and state.get('cpu_compat') is True
+        expected = torch_packages(state['device'], cpu_compat)
         expected += [line.strip() for line in (root / 'requirements-lock.txt').read_text('utf-8').splitlines()
                      if line.strip() and not line.startswith('#')]
         for requirement in expected:
@@ -85,9 +89,11 @@ def setup_ready(root=ROOT):
         return False
 
 
-def save_state(device, requested_device, model, root=ROOT):
+def save_state(device, requested_device, model, root=ROOT, *, cpu_compat=False):
     state = {'device': device, 'requested_device': requested_device, 'model': model, 'noise': device == 'cuda',
              'fingerprint': fingerprint(root)}
+    if cpu_compat:
+        state['cpu_compat'] = True
     state['assets'] = {name: (root / name).stat().st_size for name in required_assets(model, state['noise'], root)}
     write_state(state, root)
 
@@ -209,21 +215,17 @@ def run(args, **kwargs):
                 raise subprocess.CalledProcessError(process.returncode, command)
 
 
-def torch_packages(device):
-    build = 'cu128' if device == 'cuda' else 'cpu'
-    # The local version suffix matters when switching an existing environment.
-    # A plain ==2.11.0 would also accept an already installed +cu128 CPU switch.
-    return [f'{name}=={TORCH_VERSION}+{build}' for name in ('torch', 'torchaudio')]
+def torch_packages(device, cpu_compat=False):
+    # TorchAudio 2.11.1 supports torch >= 2.11; its Windows GPU wheel is published on cu132.
+    torch_build = 'cu130' if device == 'cuda' or cpu_compat else 'cpu'
+    audio_build = 'cu132' if device == 'cuda' else 'cpu'
+    return [f'torch=={TORCH_VERSION}+{torch_build}', f'torchaudio=={TORCHAUDIO_VERSION}+{audio_build}']
 
 
 def prepare_assets(model, noise=False):
-    import imageio_ffmpeg
     tools = ROOT / '.tools'
-    tools.mkdir(exist_ok=True)
-    original = Path(imageio_ffmpeg.get_ffmpeg_exe())
-    target = tools / 'ffmpeg.exe'
-    if not target.exists() or sha256(target) != sha256(original):
-        shutil.copy2(original, target)
+    original = importlib.metadata.distribution('imageio-ffmpeg').locate_file(FFMPEG_WHEEL_FILE)
+    download(original.as_uri(), tools / 'ffmpeg.exe', FFMPEG_SHA256)
     download(f'https://nodejs.org/dist/v{NODE_VERSION}/win-x64/node.exe', tools / 'node.exe', NODE_SHA256)
     prepare_speakers()
     from speech_gate import ensure_vad
@@ -243,10 +245,30 @@ def prepare_assets(model, noise=False):
         ensure_reuse(ROOT / 'models', print)
 
 
-def install_torch(python, device):
-    index = 'cu128' if device == 'cuda' else 'cpu'
-    run([python, '-m', 'pip', 'install', *torch_packages(device),
+def install_torch_wheel(python, package):
+    index = package.rsplit('+', 1)[1]
+    run([python, '-m', 'pip', 'install', '--only-binary=:all:', package,
          '--index-url', 'https://download.pytorch.org/whl/' + index])
+
+
+def install_torch(python, device):
+    for package in torch_packages(device):
+        install_torch_wheel(python, package)
+    if device != 'cpu':
+        return False
+    # Some Windows policies reject DLLs in the CPU-only distribution. The
+    # official CUDA distribution also provides the same PyTorch CPU kernels.
+    probe = [str(python), '-c', 'import torch; assert torch.ones(1).sum().item() == 1']
+    env = dict(os.environ, CUDA_VISIBLE_DEVICES='-1')
+    result = subprocess.run(probe, env=env, capture_output=True, timeout=120)
+    if result.returncode == 0:
+        return False
+    if b'WinError 4551' not in result.stderr:
+        raise RuntimeError(result.stderr.decode('utf-8', 'replace')[-1600:])
+    print('WindowsがCPU専用DLLを制限しています。CPUでも動く公式PyTorchパッケージを準備します（約2GB）。', flush=True)
+    install_torch_wheel(python, torch_packages('cpu', cpu_compat=True)[0])
+    run(probe, env=env)
+    return True
 
 
 def cuda_works(python):
@@ -283,13 +305,15 @@ def install(args):
         venv.EnvBuilder(with_pip=True).create(environment)
     run([python, '-X', 'utf8', '-c', 'import sys,struct,tkinter;assert sys.version_info[:2]==(3,12) and struct.calcsize("P")==8'])
     print(f'[2/5] {device.upper()}用の認識ライブラリを準備しています…', flush=True)
-    install_torch(python, device)
+    run([python, '-m', 'pip', 'install', '--only-binary=:all:', '-c', ROOT / 'requirements-lock.txt',
+         'pip', 'setuptools', 'filelock', '--index-url', 'https://pypi.org/simple'])
+    cpu_compat = install_torch(python, device)
     if device == 'cuda' and not cuda_works(python):
         if requested == 'cuda':
             raise RuntimeError('CUDAで実行できません。NVIDIAドライバーを確認するか setup.cmd --device cpu を実行してください。')
         print('この環境ではCUDAを使えないため、CPU版で準備します。Nemotronノイズ除去はGPUが必要です。', flush=True)
         device = 'cpu'
-        install_torch(python, device)
+        cpu_compat = install_torch(python, device)
     print('[3/5] アプリのライブラリを準備しています…', flush=True)
     run([python, '-m', 'pip', 'install', '-r', ROOT / 'requirements.txt', '--index-url', 'https://pypi.org/simple'])
     run([python, '-m', 'pip', 'check'])
@@ -300,7 +324,7 @@ def install(args):
     run(command)
     print('[5/5] 起動に必要な機能を確認しています…', flush=True)
     run([python, '-X', 'utf8', ROOT / 'run.py', '--check'])
-    save_state(device, requested, model)
+    save_state(device, requested, model, cpu_compat=cpu_compat)
     print('\nセットアップが完了しました。次回も start.cmd で起動できます。', flush=True)
 
 

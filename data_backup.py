@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import stat
@@ -21,6 +21,8 @@ MANIFEST = 'whisper-backup.json'
 LIBRARIES = ('speaker_memory_clips', 'speaker_sources')
 MAX_FILES = 100000
 MAX_METADATA = 32 * 1024 * 1024
+MAX_EXPANDED = 64 * 1024**3
+MIN_FREE = 1024**3
 
 
 def device_id():
@@ -33,17 +35,18 @@ def _json(path):
     return json.loads(path.read_text('utf-8-sig'))
 
 
-def _clips(value):
-    if isinstance(value, dict):
-        if isinstance(value.get('clips'), dict):
-            yield from value['clips'].values()
-        for child in value.values():
-            if isinstance(child, (dict, list)): yield from _clips(child)
-    elif isinstance(value, list):
-        for child in value: yield from _clips(child)
+def _clips(data):
+    groups = [data["profiles"]]
+    for change in data.get("history", []):
+        groups.extend((change["before"], change["after"]))
+    for profiles in groups:
+        for profile in profiles.values():
+            yield from profile.get("clips", {}).values()
 
 
 def _audio_path(folder, name):
+    if not isinstance(name, str) or not re.fullmatch(r'[0-9a-f]{32}\.wav', name):
+        raise ValueError('学習音声のファイル名が正しくありません。')
     for sub in ('', '.undo'):
         path = folder / 'speaker_memory_clips' / sub / name
         if path.is_file(): return path
@@ -82,9 +85,9 @@ def _validate(folder, original_root, *, allow_local_sources=False):
             from correction_memory import _read
             _read(path)
     store = MemoryStore(folder / 'speaker_memory.json')
+    data = _json(store.path) if store.path.exists() else None
     profiles = store.load()
-    if store.path.exists():
-        data = _json(store.path)
+    if data is not None:
         for clip in _clips(data):
             audio = _audio_path(folder, clip['file']) if clip.get('file') else None
             if audio:
@@ -105,8 +108,11 @@ def _validate(folder, original_root, *, allow_local_sources=False):
                         raise ValueError('バックアップに必要な学習音声が含まれていません。')
                     relative = source.relative_to(ud.stored_path(original_root))
                     if '..' in relative.parts: raise ValueError('学習音声の保存場所が正しくありません。')
+                    relative = _safe_name('/'.join(relative.parts))
+                    if not relative.parts or relative.parts[0] != 'speaker_sources':
+                        raise ValueError('学習音声の保存場所が正しくありません。')
                     source = folder.joinpath(*relative.parts)
-                    if not source.is_file() or not source.is_relative_to(folder / 'speaker_sources') or not read_pcm(source):
+                    if not source.is_file() or not read_pcm(source):
                         raise ValueError('バックアップに学習音声が見つかりません。')
         for history in store.review_history():
             for name in history['archived']:
@@ -189,6 +195,11 @@ def create_backup(destination, *, include_results=False, root=None, ffmpeg=None,
                     for name in files: archive.write(stage / name, 'data/' + name)
                 progress('バックアップの内容を検証しています…')
                 verified = inspect_backup(partial, progress=progress)
+                with zipfile.ZipFile(partial) as archive:
+                    for name, entry in files.items():
+                        with archive.open('data/' + name) as stream:
+                            if hashlib.file_digest(stream, 'sha256').hexdigest() != entry['sha256']:
+                                raise OSError('作成したバックアップの検証に失敗しました。')
                 partial.replace(destination)
                 return {**verified, 'path': str(destination)}
             finally:
@@ -202,44 +213,58 @@ def _safe_name(name):
     for part in parts:
         if (not part or part in {'.', '..'} or part.endswith((' ', '.'))
                 or any(ord(c) < 32 for c in part) or any(c in part for c in '<>"|?*')
-                or re.fullmatch(r'(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?', part)):
+                or PureWindowsPath(part).is_reserved()):
             raise ValueError('バックアップ内のファイル名が正しくありません。')
     return PurePosixPath(name)
 
 
+def _inventory(archive):
+    infos = archive.infolist()
+    if len(infos) > MAX_FILES + 1: raise ValueError('バックアップのファイル数が多すぎます。')
+    names = [info.filename for info in infos]
+    if len(set(n.casefold() for n in names)) != len(names): raise ValueError('バックアップのファイル名が重複しています。')
+    if MANIFEST not in names or archive.getinfo(MANIFEST).file_size > MAX_METADATA:
+        raise ValueError('Whisperのバックアップファイルを選んでください。')
+    for info in infos:
+        _safe_name(info.filename)
+        if (info.is_dir() or stat.S_ISLNK(info.external_attr >> 16) or info.flag_bits & 1
+                or info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)):
+            raise ValueError('バックアップの形式が対応していません。')
+    manifest = json.loads(archive.read(MANIFEST).decode('utf-8'))
+    if (not isinstance(manifest, dict) or manifest.get('format') != FORMAT or manifest.get('version') != 1
+            or type(manifest.get('include_results')) is not bool or not isinstance(manifest.get('files'), dict)
+            or not isinstance(manifest.get('created'), str) or not isinstance(manifest.get('device'), str)
+            or not isinstance(manifest.get('source_root'), str) or not ud.stored_path(manifest['source_root']).is_absolute()):
+        raise ValueError('バックアップの形式・バージョンを確認してください。')
+    files = manifest['files']
+    if set(names) != {MANIFEST} | {'data/' + n for n in files}: raise ValueError('バックアップの一覧と内容が一致しません。')
+    total = 0
+    for name, entry in files.items():
+        relative = _safe_name(name)
+        allowed = len(relative.parts) == 1 and name in ud.FILES
+        allowed |= len(relative.parts) > 1 and relative.parts[0] in LIBRARIES
+        allowed |= manifest['include_results'] and len(relative.parts) > 1 and relative.parts[0] == 'transcripts'
+        if (not allowed or not isinstance(entry, dict) or type(entry.get('bytes')) is not int or entry['bytes'] < 0
+                or not isinstance(entry.get('sha256'), str) or not re.fullmatch('[0-9a-f]{64}', entry['sha256'])
+                or archive.getinfo('data/' + name).file_size != entry['bytes']):
+            raise ValueError('バックアップ内の保存データを確認できません。')
+        total += entry['bytes']
+    if total > MAX_EXPANDED:
+        raise ValueError('展開後のバックアップが64 GiBを超えています。録画を分けてください。')
+    for info in infos:
+        if info.filename.lower().endswith('.json') and info.file_size > MAX_METADATA:
+            raise ValueError('バックアップ内の設定・結果ファイルが大きすぎます。')
+        if info.file_size > 1024**2 and info.file_size > 500 * max(1, info.compress_size):
+            raise ValueError('バックアップ内の圧縮率が異常です。')
+    return manifest, total
+
+
 def _extract(archive_path, stage, progress):
     with zipfile.ZipFile(archive_path) as archive:
-        infos = archive.infolist()
-        if len(infos) > MAX_FILES + 1: raise ValueError('バックアップのファイル数が多すぎます。')
-        names = [info.filename for info in infos]
-        if len(set(n.casefold() for n in names)) != len(names): raise ValueError('バックアップのファイル名が重複しています。')
-        if MANIFEST not in names or archive.getinfo(MANIFEST).file_size > MAX_METADATA:
-            raise ValueError('Whisperのバックアップファイルを選んでください。')
-        for info in infos:
-            _safe_name(info.filename)
-            if (info.is_dir() or stat.S_ISLNK(info.external_attr >> 16) or info.flag_bits & 1
-                    or info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)):
-                raise ValueError('バックアップの形式が対応していません。')
-        manifest = json.loads(archive.read(MANIFEST).decode('utf-8'))
-        if (not isinstance(manifest, dict) or manifest.get('format') != FORMAT or manifest.get('version') != 1
-                or type(manifest.get('include_results')) is not bool or not isinstance(manifest.get('files'), dict)
-                or not isinstance(manifest.get('created'), str) or not isinstance(manifest.get('device'), str)
-                or not isinstance(manifest.get('source_root'), str) or not ud.stored_path(manifest['source_root']).is_absolute()):
-            raise ValueError('バックアップの形式・バージョンを確認してください。')
+        manifest, total = _inventory(archive)
         files = manifest['files']
-        if set(names) != {MANIFEST} | {'data/' + n for n in files}: raise ValueError('バックアップの一覧と内容が一致しません。')
-        total = 0
-        for name, entry in files.items():
-            relative = _safe_name(name)
-            allowed = len(relative.parts) == 1 and name in ud.FILES
-            allowed |= len(relative.parts) > 1 and relative.parts[0] in LIBRARIES
-            allowed |= manifest['include_results'] and len(relative.parts) > 1 and relative.parts[0] == 'transcripts'
-            if (not allowed or not isinstance(entry, dict) or type(entry.get('bytes')) is not int or entry['bytes'] < 0
-                    or not isinstance(entry.get('sha256'), str) or not re.fullmatch('[0-9a-f]{64}', entry['sha256'])
-                    or archive.getinfo('data/' + name).file_size != entry['bytes']):
-                raise ValueError('バックアップ内の保存データを確認できません。')
-            total += entry['bytes']
-        if total > shutil.disk_usage(stage).free - 64 * 1024 * 1024:
+        free = shutil.disk_usage(stage).free
+        if total > free - max(MIN_FREE, free // 10):
             raise OSError('バックアップの展開に必要な空き容量がありません。')
         for index, (name, entry) in enumerate(files.items(), 1):
             progress(f'バックアップを確認しています… {index}/{len(files)}')
@@ -260,11 +285,31 @@ def _extract(archive_path, stage, progress):
 def inspect_backup(path, *, progress=lambda text: None):
     path = Path(path)
     fingerprint = ud._digest(path)
-    with tempfile.TemporaryDirectory(prefix='whisper-backup-check-') as temp:
-        manifest = _extract(path, Path(temp), progress)
+    with zipfile.ZipFile(path) as archive:
+        manifest, total = _inventory(archive)
+        files = manifest['files']
+        def metadata(name):
+            raw = archive.read('data/' + name)
+            if hashlib.sha256(raw).hexdigest() != files[name]['sha256']:
+                raise ValueError('バックアップ内の設定が破損しています。')
+            return json.loads(raw.decode('utf-8-sig'))
+
+        profiles, rules = {}, []
+        if 'speaker_memory.json' in files:
+            from speaker_memory import MemoryStore
+            memory = metadata('speaker_memory.json')
+            profiles = memory['profiles']
+            MemoryStore.validate_profiles(profiles)
+            MemoryStore.validate_history(memory.get('history', []))
+        if 'corrections.json' in files:
+            from corrections import normalize_settings
+            rules = normalize_settings(metadata('corrections.json'))['rules']
+        summary = {'speakers': len(profiles), 'learning_clips': sum(len(p.get('clips', {})) for p in profiles.values()),
+                   'dictionary_rules': len(rules), 'settings': sum(name in files for name in ud.FILES),
+                   'results': sum(PurePosixPath(name).match('transcripts/*/result.json') for name in files)}
     if ud._digest(path) != fingerprint: raise OSError('確認中にバックアップが変わりました。選び直してください。')
     return {'created': manifest['created'], 'include_results': manifest['include_results'],
-            'summary': manifest['summary'], 'fingerprint': fingerprint,
+            'summary': summary, 'fingerprint': fingerprint, 'expanded_bytes': total,
             'different_pc': manifest['device'] != device_id()}
 
 
@@ -284,7 +329,13 @@ def restore_backup(path, *, expected_fingerprint, root=None, progress=lambda tex
                 file = stage / name
                 if file.suffix.lower() == '.json' and (name == 'speaker_memory.json' or name.startswith('transcripts/')):
                     data = _json(file)
-                    relocated = ud._relocate(data, ud.stored_path(manifest['source_root']), stage, root)
+                    relocated = ud._relocate(data, ud.stored_path(manifest['source_root']), stage, root, probe_aliases=False)
+                    if name == 'speaker_memory.json':
+                        for clip in _clips(relocated):
+                            if clip.get('file'):
+                                source = ud.stored_path(clip.get('source', ''))
+                                if not source.is_relative_to(ud.stored_path(root)) or '..' in source.parts:
+                                    clip['source'] = ''
                     if data != relocated: file.write_text(json.dumps(relocated, ensure_ascii=False, indent=2), 'utf-8')
             if manifest['device'] != device_id() and (stage / 'recording_settings.json').exists():
                 data = _json(stage / 'recording_settings.json')

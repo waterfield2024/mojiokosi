@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install native prerequisites
-        run: brew install python@3.12 python-tk@3.12 ffmpeg-full ollama
+        run: brew install python@3.12 python-tk@3.12 ffmpeg-full node ollama
       - name: Set up isolated Apple Silicon environment
         run: /opt/homebrew/opt/python@3.12/bin/python3.12 setup_mac.py --model base --device cpu --without-context-ai
       - name: Mac adapter tests

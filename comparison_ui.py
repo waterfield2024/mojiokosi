@@ -97,7 +97,11 @@ class ComparisonDialog(MergeControls,tk.Toplevel):
         try:
             req = dict(self.request);req["whisper_model"] = WHISPER_CHOICES[self.model.get()]
             if req["mode"] == "youtube":req["source"] = youtube_url(req["source"])
-            elif not Path(req["source"]).is_file():raise ValueError("元の音声・動画が見つかりません。メイン画面で選び直してください。")
+            elif not req.get("source") or not Path(req["source"]).is_file():
+                from tkinter import filedialog
+                source = filedialog.askopenfilename(parent=self, title="比較する元の音声・動画を選んでください")
+                if not source:return
+                req["source"] = source
             req.update(operation="compare",prompt="",context_correct=False,correction_rules=[])
             self.request = req;self.path = self.app.comparison_path = None
             self.data = None;self.results = {};self._running_at = {};self.render()
@@ -286,7 +290,9 @@ class ComparisonControls:
     def open_saved_comparison(self,path):
         if self.proc:return
         data = read_comparison(path)
-        req = {"source":data["source"],"mode":data["source_mode"],"whisper_model":data["results"]["whisper"]["model"],
+        from result_media import MEDIA_EXTENSIONS, result_file
+        source = data["source"] if data["source_mode"] == "youtube" else result_file(Path(path).parent, data.get("source"), MEDIA_EXTENSIONS)
+        req = {"source":str(source or ""),"mode":data["source_mode"],"whisper_model":data["results"]["whisper"]["model"],
                "language":data.get("whisper_language","ja"),"compute":data.get("compute","auto"),"num_speakers":data.get("num_speakers",0)}
         if self.comparison_window:self.comparison_window.destroy()
         self.comparison_window = ComparisonDialog(self,req);self.comparison_path=Path(path)

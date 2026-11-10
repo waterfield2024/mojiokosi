@@ -212,7 +212,7 @@ def partial_output(output, job):
     return output.with_name(f".{output.stem}.{Path(job).name}.partial.mp4")
 
 
-def get_source(result, folder):
+def get_source(result, folder, *, selected_source=None):
     if result.get("video_export_mode") == "audio_subtitles":
         from audio_video import prepare_audio_video
         return prepare_audio_video(result, folder)
@@ -224,8 +224,9 @@ def get_source(result, folder):
     try:
         url = youtube_url(source)
     except ValueError:
-        path = Path(source).resolve()
-        if not source or not path.is_file():
+        from result_media import MEDIA_EXTENSIONS, result_file
+        path = Path(selected_source) if selected_source else result_file(folder, source, MEDIA_EXTENSIONS)
+        if not path or not path.is_file():
             raise FileNotFoundError("元動画が見つかりません。「字幕付きMP4を保存」から元動画を選び直してください。")
         return path
     video_id = url.rsplit("=", 1)[-1]
@@ -235,8 +236,9 @@ def get_source(result, folder):
     if manifest.is_file():
         try:
             name = json.loads(manifest.read_text("utf-8"))["filename"]
-            candidate = (cache / name).resolve()
-            if candidate.parent == cache.resolve() and candidate.is_file():
+            from result_media import MEDIA_EXTENSIONS, result_file
+            candidate = result_file(cache, name, MEDIA_EXTENSIONS)
+            if candidate and candidate.parent == cache.absolute():
                 emit("status", text="取得済みの元動画を使用します…")
                 return candidate
         except (ValueError, KeyError, OSError):

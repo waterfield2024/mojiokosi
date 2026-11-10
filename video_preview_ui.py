@@ -20,9 +20,11 @@ from caption_timing_ui import CaptionTimingEditor
 
 
 class VideoPreviewDialog(tk.Toplevel):
-    def __init__(self, app, result, folder):
+    def __init__(self, app, result, folder, *, playback_path=None, selected_source=None):
         super().__init__(app.root)
         self.withdraw()
+        self.playback_path = playback_path
+        self.selected_source = selected_source
         self.app, self.result, self.folder = app, deepcopy(result), Path(folder)
         self.closed = False; self.proc = None; self.owner = None; self.temp = None
         self.poll_id = self.seek_id = self.size_id = None
@@ -52,7 +54,7 @@ class VideoPreviewDialog(tk.Toplevel):
         self.minsize(820, 620)
         outer = ttk.Frame(self, padding=16); outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1); outer.rowconfigure(2, weight=1)
-        ttk.Label(outer, text="録音した音声を確認して、MP4に保存" if audio_only else "動画を確認して、字幕付きMP4に保存",
+        ttk.Label(outer, text="MP4の再生" if playback_path else "録音した音声を確認して、MP4に保存" if audio_only else "動画を確認して、字幕付きMP4に保存",
                   style="Preview.Title.TLabel").grid(row=0,column=0,sticky="w")
         self.source_hint = ttk.Label(outer, text="この録音に映像はありません。再生すると音声が流れ、字幕を黒背景で表示します。" if audio_only else
             "まず再生して確認してください。必要なときだけ、下のボタンから字幕を編集できます。", wraplength=980)
@@ -111,6 +113,13 @@ class VideoPreviewDialog(tk.Toplevel):
         self.save_button=ttk.Button(actions,text="MP4を保存…",style="Accent.TButton",command=self.save,state="disabled")
         self.save_button.pack(side="right")
         ttk.Button(actions,text="閉じる",command=self.destroy).pack(side="right",padx=8)
+        if playback_path:
+            self.title("MP4の再生")
+            self.source_hint.grid_remove()
+            toolbar.grid_remove()
+            self.notice_row.grid_remove()
+            self.save_button.pack_forget()
+            self.canvas.configure(cursor="")
         self.sync_side();self.size_text.set(f"{round(self.size.get())}%")
         self.protocol("WM_DELETE_WINDOW",self.destroy)
         app.window_settings.attach(self,"video_preview")
@@ -193,7 +202,8 @@ class VideoPreviewDialog(tk.Toplevel):
                 self.proc.terminate()
                 raise RuntimeError("プレビュー用の動画処理を安全に起動できませんでした。画面を閉じて再度お試しください。")
             threading.Thread(target=self.read_events,args=(self.proc,self.events,self.play_frames),daemon=True).start()
-            self.send({"result":self.result,"folder":str(self.folder)})
+            self.send({"result": self.result, "folder": str(self.folder), "selected_source": self.selected_source,
+                       "playback_path": str(self.playback_path) if self.playback_path else None})
             self.poll_id=self.after(50,self.poll)
         except Exception as exc:
             self.release_worker();self.media_error("準備できませんでした："+str(exc))
@@ -233,17 +243,21 @@ class VideoPreviewDialog(tk.Toplevel):
                 if kind=="prepared":
                     self.source=Path(event["source"]);self.width=event["width"];self.height=event["height"];self.duration=event["duration"]
                     self.has_audio=event.get("audio",False)
-                    self.maximum=max(.01,(self.duration or max(float(c["end"]) for c in self.result["segments"]))-.04)
+                    self.maximum=max(.01,(self.duration or max((float(c["end"]) for c in self.result["segments"]), default=0.))-.04)
                     self.seek_scale.configure(to=self.maximum,state="normal")
                     for button in (self.edit_button,self.style_button,self.restart_button):button.configure(state="normal")
-                    self.rebuild()
+                    if self.playback_path:
+                        self.resume_after_seek = True
+                        self.seek_to(0)
+                    else:
+                        self.rebuild()
                 elif kind=="frame":
                     self.busy=False
                     if abs(event["seconds"]-self.target_time)<.001:
                         if self.seek_id:self.after_cancel(self.seek_id);self.seek_id=None
                         with Image.open(event["frame"]) as image:self.frame=image.convert("RGB")
                         self.shown_time=event["seconds"];self.finish_preparing()
-                        self.status.set("再生できます。確認が済んだら「MP4を保存…」を押してください。")
+                        self.status.set("再生できます。" if self.playback_path else "再生できます。確認が済んだら「MP4を保存…」を押してください。")
                         self.draw();self.save_button.configure(state="normal" if self.layout else "disabled")
                         self.play_button.configure(text="▶ 再生",state="normal");self.update_timebar(self.shown_time)
                         if self.resume_after_seek:
@@ -265,9 +279,9 @@ class VideoPreviewDialog(tk.Toplevel):
                         self.want_playing=False;self.play_button.configure(text="再生")
                         self.shown_time=min(self.duration or event["seconds"],event["seconds"])
                         self.target_time=self.shown_time;self.update_timebar(self.shown_time);self.draw()
-                        self.status.set("一時停止中。字幕を調整して再生を再開できます。" if state=="paused" else "最後まで再生しました。「再生」で最初から再生できます。")
+                        self.status.set("一時停止中。" if state=="paused" else "最後まで再生しました。「再生」で最初から再生できます。")
                     else:
-                        self.status.set("再生準備中…" if state=="starting" else "再生中。文章・話者名・時刻を編集できます。位置・サイズは動画全体に適用します。"+("（音声のない動画）" if not self.has_audio else ""))
+                        self.status.set("再生準備中…" if state=="starting" else "再生中。" +("（音声のない動画）" if not self.has_audio else ""))
                 elif kind=="play_error" and event["epoch"]==self.play_epoch:
                     self.stop_playback();self.status.set(event["text"].splitlines()[0][:240])
                 elif kind in ("status","error"):

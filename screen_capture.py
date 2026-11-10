@@ -80,14 +80,9 @@ def recorded_video(result, folder):
     recording = result.get('screen_recording') or {}
     if not recording.get('complete'):
         return None
-    # The local relative path survives moving the entire result folder.
-    relative = recording.get('file', '')
-    if relative:
-        candidate = (Path(folder) / relative).resolve()
-        if candidate.is_relative_to(Path(folder).resolve()) and candidate.is_file():
-            return candidate
-    source = result.get('video_source')
-    return Path(source) if source and Path(source).is_file() else None
+    from result_media import result_file
+    return (result_file(folder, recording.get('file'), {'.mp4'})
+            or result_file(folder, result.get('video_source'), {'.mp4'}))
 
 
 class ScreenRecorder:

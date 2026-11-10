@@ -77,8 +77,9 @@ def comparison_audio_source(path,results,data):
         audio=resolve_cached_audio(results.get(side,{}),folder/side)
         if audio:return audio
     if data.get("source_mode")=="file":
-        source=Path(data.get("source", ""))
-        if source.is_file():return source
+        from result_media import MEDIA_EXTENSIONS, result_file
+        source = result_file(folder, data.get("source"), MEDIA_EXTENSIONS)
+        if source:return source
     raise FileNotFoundError("比較に使った音声が見つかりません。比較フォルダー全体を戻すか、元の動画でもう一度比較してください。")
 
 

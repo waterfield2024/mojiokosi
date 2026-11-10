@@ -51,7 +51,8 @@ cd mojiokosi
 ```
 
 セットアップはPython、Pythonライブラリ、FFmpeg、Node.js、話者判別モデル、軽量Whisper baseを取得します。
-NVIDIA GPUを検出した場合はPyTorchのCUDA 12.8版、それ以外はCPU版をインストールします。
+NVIDIA GPUを検出した場合はPyTorchのCUDA 13.0版、それ以外はCPU版をインストールします。
+Windowsのアプリケーション制御でCPU専用DLLがブロックされた場合は、CPU演算にも対応する公式パッケージ（約2 GB）を取得してCPUモードで起動します。
 NVIDIA GPUでは**Nemotronのノイズ除去モデルと必要なライブラリも自動で準備**します。
 CUDAの動作確認に失敗した場合はCPU版へ切り替えて、通常の文字起こしを使えるようにします。
 ノイズ除去のオン・オフはアプリで選びます。CPU版ではノイズ除去は使えません。

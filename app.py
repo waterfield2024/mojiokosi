@@ -26,6 +26,10 @@ if __name__ == '__main__':
         _installation_session.__enter__()
         atexit.register(_installation_session.__exit__, None, None, None)
         recover_pending(Path(__file__).resolve().parent)
+        if os.name == 'nt':
+            from setup_local import read_state
+            if read_state().get('device') == 'cpu':
+                os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
     except (OSError, ValueError) as exc:
         messagebox.showerror('Whisperを起動できません', str(exc))
         raise SystemExit(1)
@@ -345,7 +349,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         if self.history_window:self.history_window.stop_audio()
         self.persist_edits()
         self.selected = None
-        self.segments = clean
+        self.validate_saved_learning(clean, Path(path).parent)
+        self.segments = data["segments"] = clean
         ensure_segment_ids(self.segments)
         self.replacement_undo = []
         self.speakers = normalize_names(clean, data.get("speakers"))
@@ -367,7 +372,6 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             self.select()
         self.root.title(f"Whisper（話者対応） — {data.get('title', '文字起こし結果')}")
         self.update_video_controls()
-        self.resume_correction_learning()
         self.refresh_history()
         if self.context_window and self.context_window.winfo_exists():
             self.context_window.refresh()
@@ -480,7 +484,16 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
                 is_youtube = True
             except ValueError:
                 pass
-            from audio_video import AUDIO_EXTENSIONS
+            from result_media import AUDIO_EXTENSIONS, MEDIA_EXTENSIONS, result_file
+            selected_source = None
+            if not is_youtube:
+                local = result_file(self.result_path.parent, source, MEDIA_EXTENSIONS)
+                if local:
+                    source = str(local)
+                elif not source or source != self.source.get().strip().strip('"'):
+                    source = ""
+                else:
+                    selected_source = source
             if data.get("video_export_mode") == "audio_subtitles" or (
                     not is_youtube and (not Path(source).is_file() or Path(source).suffix.lower() in AUDIO_EXTENSIONS)):
                 from video_source_ui import choose_video_source
@@ -489,9 +502,10 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
                     return
                 data.update(choice)
                 source = choice["video_source"]
+                selected_source = source if choice["video_export_mode"] == "source_video" else None
             data.update(video_source=source, segments=self.segments, speakers=self.speakers)
             from video_preview_ui import VideoPreviewDialog
-            self.video_preview = VideoPreviewDialog(self, data, self.result_path.parent)
+            self.video_preview = VideoPreviewDialog(self, data, self.result_path.parent, selected_source=selected_source)
         except Exception as exc:
             messagebox.showerror("動画を保存できません", str(exc))
 
@@ -529,11 +543,13 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         preview.destroy()
 
     def play_video(self):
-        if self.video_path and self.video_path.is_file():
-            try:
-                open_path(self.video_path)
-            except OSError as exc:
-                messagebox.showerror("動画を開けません", str(exc))
+        from video_preview_ui import VideoPreviewDialog
+        if self.video_preview is not None and self.video_preview.winfo_exists():
+            self.video_preview.lift()
+            return
+        if self.video_path and self.video_path.suffix.lower() == ".mp4" and self.video_path.is_file():
+            self.video_preview = VideoPreviewDialog(self, {"segments": []}, self.video_path.parent,
+                                                   playback_path=self.video_path)
 
     def read_worker(self, proc, job):
         try:
@@ -732,7 +748,8 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
             self.result_data["segments"] = self.segments
             self.result_data["speakers"] = self.speakers
             edited = self.result_path.parent / "edited.json"
-            edited.write_text(json.dumps(self.result_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            from context_ai import write_json
+            write_json(edited, self.result_data)
         self.refresh_history()
 
     def copy(self):

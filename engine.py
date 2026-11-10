@@ -201,14 +201,10 @@ def cache_audio(wav, folder):
 
 
 def resolve_cached_audio(data, folder):
-    local = Path(folder) / ".audio" / "source.flac"
-    if local.is_file():
-        return local
-    recording = Path(folder) / ".audio" / "recording.wav"
-    if recording.is_file():
-        return recording
-    cached = data.get("audio_file")
-    return Path(cached) if cached and Path(cached).is_file() else None
+    from result_media import result_file
+    return (result_file(folder, ".audio/source.flac", {".flac"})
+            or result_file(folder, ".audio/recording.wav", {".wav"})
+            or result_file(folder, data.get("audio_file"), {".flac", ".wav"}))
 
 
 def apply_recorded_names(data, wav, turns, request, protected=None):
@@ -267,8 +263,10 @@ def run_speaker_job(request, job):
         try:
             url = youtube_url(source)
         except ValueError:
-            media = Path(source).resolve()
-            if not source or not media.is_file():
+            from result_media import MEDIA_EXTENSIONS, result_file
+            selected = request.get("selected_source")
+            media = Path(selected) if selected else result_file(folder, source, MEDIA_EXTENSIONS)
+            if not media or not media.is_file():
                 raise FileNotFoundError("元の音声・動画ファイルが見つかりません。")
         else:
             media, _ = get_youtube_audio(url, job)

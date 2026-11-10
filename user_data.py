@@ -131,18 +131,21 @@ def stored_path(value):
     return windows if windows.is_absolute() else PurePosixPath(str(value))
 
 
-def _relocate(value, legacy, stage, root, key='', *, require_exists=True):
+def _relocate(value, legacy, stage, root, key='', *, require_exists=True, probe_aliases=True):
     if isinstance(value, dict):
-        return {k: _relocate(v, legacy, stage, root, k, require_exists=require_exists) for k, v in value.items()}
+        return {k: _relocate(v, legacy, stage, root, k, require_exists=require_exists, probe_aliases=probe_aliases) for k, v in value.items()}
     if isinstance(value, list):
-        return [_relocate(v, legacy, stage, root, key, require_exists=require_exists) for v in value]
+        return [_relocate(v, legacy, stage, root, key, require_exists=require_exists, probe_aliases=probe_aliases) for v in value]
     if key not in {'source', 'audio_file', 'video_file', 'video_source', 'before_context', 'origin', 'folder', 'result_path'} or not isinstance(value, str):
         return value
     path, old = stored_path(value), stored_path(legacy)
     if path.is_absolute() and path.is_relative_to(old):
         relative = path.relative_to(old)
-        if '..' not in relative.parts and (not require_exists or stage.joinpath(*relative.parts).exists()):
+        if (all(part not in ('.', '..') and not PureWindowsPath(part).anchor and ':' not in part and chr(92) not in part for part in relative.parts)
+                and (not require_exists or stage.joinpath(*relative.parts).exists())):
             return str(root.joinpath(*relative.parts))
+    if not probe_aliases or any(PureWindowsPath(p).drive.startswith(chr(92)) for p in (value, legacy)):
+        return value
     path, legacy = Path(value), Path(str(legacy))
     # Windows may spell the same existing location as RUNNER~1 or runneradmin.
     # Keep the lexical route for a previous PC's now-unavailable paths, and use

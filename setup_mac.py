@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import venv
@@ -34,6 +35,34 @@ def state():
     except (OSError, ValueError): return {}
 
 
+def current_media_tool(name):
+    try:
+        path = str(tool_path(name))
+        if name == 'node':
+            value = subprocess.check_output([path, '--version'], text=True, timeout=10).strip()
+            version = tuple(map(int, value.removeprefix('v').split('.')))
+            fixed = {22: (22, 23, 4), 24: (24, 22, 1), 26: (26, 12, 1)}
+            return version[0] > 26 or (version[0] in fixed and version >= fixed[version[0]])
+        output = subprocess.check_output([path, '-version'], text=True, timeout=10)
+        version = re.match(r'ffmpeg version (\d+)\.(\d+)(?:\.(\d+))?', output)
+        return bool(version and tuple(int(v or 0) for v in version.groups()) >= (9, 0, 2))
+    except (IndexError, ValueError, OSError, subprocess.SubprocessError):
+        return False
+
+
+def ensure_media_tools():
+    """Both the launcher and already-installed update helpers enter setup here."""
+    from setup_local import run
+    brew = '/opt/homebrew/bin/brew'
+    for name, formula in (('ffmpeg', 'ffmpeg-full'), ('node', 'node')):
+        if current_media_tool(name):
+            continue
+        installed = subprocess.run([brew, 'list', '--versions', formula], capture_output=True, check=False)
+        run([brew, 'upgrade' if installed.stdout.strip() else 'install', formula])
+        if not current_media_tool(name):
+            raise RuntimeError(f'{formula} の更新後のバージョンを確認できません。')
+
+
 def ready():
     from setup_local import required_assets
     saved = state()
@@ -42,6 +71,7 @@ def ready():
         for item in requirements():
             name, version = item.split('==')
             if importlib.metadata.version(name) != version: return False
+        if not all(current_media_tool(name) for name in ('ffmpeg', 'node')): return False
         for name in ('ffmpeg', 'node', 'ollama'):
             if not tool_path(name).is_file(): return False
         for name in required_assets(saved['model'], False)[2:]:
@@ -109,6 +139,7 @@ def main(argv=None):
     from setup_local import setup_lock, run, required_assets
     python = environment_python(ROOT)
     with setup_lock(ROOT):
+        ensure_media_tools()
         check = subprocess.run([str(python), '-X', 'utf8', __file__, '--check-ready'], capture_output=True) if python.is_file() else None
         if not (args.ensure and not args.model and not args.device and check and check.returncode == 0):
             saved = state()
@@ -117,8 +148,10 @@ def main(argv=None):
             without_context = args.without_context_ai or (args.ensure and saved.get('without_context_ai', False))
             if model not in ('base', 'small', 'turbo', 'granite', 'haas', 'none'): model = 'base'
             print('[1/4] Mac専用のPython環境を準備しています…', flush=True)
-            venv.EnvBuilder(with_pip=True, upgrade=python.is_file()).create(python.parent.parent)
+            if Path(sys.prefix).resolve() != python.parent.parent.resolve() or not python.is_file():
+                venv.EnvBuilder(with_pip=True, upgrade=python.is_file()).create(python.parent.parent)
             print('[2/4] Apple Silicon用のライブラリを準備しています…', flush=True)
+            run([python, '-m', 'pip', 'install', '--only-binary=:all:', 'pip==26.3'])
             run([python, '-m', 'pip', 'install', '-r', ROOT/'requirements-macos.txt'])
             run([python, '-m', 'pip', 'check'])
             print('[3/4] 話者・無音判定・認識モデルを準備しています…', flush=True)

@@ -14,7 +14,17 @@ from preview_playback import Playback, has_audio
 def main():
     # Wait for input so the GUI can assign its process job before descendants start.
     request = json.loads(sys.stdin.readline())
-    source = get_source(request["result"], request["folder"])
+    if request.get("playback_path"):
+        from result_media import result_file
+        source = result_file(request["folder"], request["playback_path"], {".mp4"})
+        if not source:
+            raise ValueError("再生するMP4が見つかりません。")
+        # Recordings and exports produced by this app start with an ISO BMFF file-type box.
+        with source.open("rb") as stream:
+            if stream.read(8)[4:] != b"ftyp":
+                raise ValueError("MP4形式の録画を選んでください。")
+    else:
+        source = get_source(request["result"], request["folder"], selected_source=request.get("selected_source"))
     width, height, duration = inspect_video(source)
     audio = has_audio(source)
     emit("prepared", source=str(source), width=width, height=height, duration=duration, audio=audio)

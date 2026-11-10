@@ -3,7 +3,6 @@ from copy import deepcopy
 from datetime import datetime
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 from uuid import uuid4
@@ -140,11 +139,11 @@ def save_merged(path,plan,choices):
     result = plan.combine(choices)
     folder = path.parent/(datetime.now().strftime("merged_%Y%m%d_%H%M%S_")+uuid4().hex[:8]);folder.mkdir()
     for side in SIDES:
-        cached = resolve_cached_audio(current[side],path.parent/side)
+        cached = resolve_cached_audio({},path.parent/side)
+        cached = cached or resolve_cached_audio({}, path.parent)
         if cached:
             target = folder/".audio"/cached.name;target.parent.mkdir()
-            try:os.link(cached,target)
-            except OSError:shutil.copy2(cached,target)
+            shutil.copyfile(cached,target)
             result["audio_file"] = str(target);break
     result["comparison_merge"]["comparison_file"] = "../comparison.json"
     save_result(result,folder)

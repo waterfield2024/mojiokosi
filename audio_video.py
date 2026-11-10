@@ -9,17 +9,14 @@ import uuid
 
 from engine import TOOLS, NO_WINDOW, emit, resolve_cached_audio
 
-AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".wma", ".opus"}
+from result_media import AUDIO_EXTENSIONS, result_file
 
 
 def saved_audio(result, folder):
     audio = resolve_cached_audio(result, folder)
     if audio:
         return audio.resolve()
-    source = Path(str(result.get("source") or ""))
-    if source.is_file() and source.suffix.lower() in AUDIO_EXTENSIONS:
-        return source.resolve()
-    return None
+    return result_file(folder, result.get("source"), AUDIO_EXTENSIONS)
 
 
 def prepare_audio_video(result, folder):

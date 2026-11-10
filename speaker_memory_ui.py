@@ -11,6 +11,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 import uuid
+from result_media import MEDIA_EXTENSIONS, result_file
 from engine import ROOT, TOOLS, NO_WINDOW, resolve_cached_audio
 from speaker_memory import MemoryStore, PROFILE_FILE
 
@@ -91,7 +92,7 @@ class SpeakerMemoryControls:
 
     def queue_named_voice(self, speaker, name, existing=None):
         """New enrollments retain the exact excerpts used, so they can be reviewed."""
-        source = resolve_cached_audio(self.result_data, self.result_path.parent) or self.result_data.get("audio_file") or self.result_data.get("source", "")
+        source = resolve_cached_audio(self.result_data, self.result_path.parent) or result_file(self.result_path.parent, self.result_data.get("source"), MEDIA_EXTENSIONS)
         if not source or not Path(source).is_file():
             return False
         from speaker_relearning import correction_ranges
@@ -156,7 +157,7 @@ class SpeakerMemoryControls:
             return
         intent["extracting"] = True
         data = self.result_data
-        source = resolve_cached_audio(data, Path(key[0])) or data.get("audio_file") or data.get("source", "")
+        source = resolve_cached_audio(data, Path(key[0])) or result_file(Path(key[0]), data.get("source"), MEDIA_EXTENSIONS)
         ranges = [[float(row["start"]), float(row["end"])] for row in self.segments
                   if row.get("speaker") == key[1] and not (row.get('overlap_detected') or row.get('overlap_separated')) and
                   (not row.get("speaker_review") or row.get("speaker_manual"))]
@@ -261,11 +262,16 @@ class SpeakerMemoryControls:
             self.memory_status.set("話者を修正しました。声を覚え直すには名前を付けるか、「登録済みの話者」から選んでください。")
             return
         folder = str(self.result_path.parent.resolve())
-        source = resolve_cached_audio(self.result_data, Path(folder)) or self.result_data.get("audio_file") or self.result_data.get("source", "")
+        source = resolve_cached_audio(self.result_data, Path(folder)) or result_file(Path(folder), self.result_data.get("source"), MEDIA_EXTENSIONS)
+        if not source:
+            self.memory_status.set("学習に使う録音が見つかりません。録音を含む結果フォルダーを開いてください。")
+            return
         candidates, seconds = [], 0.
         try:
             for candidate in [row] + [r for r in reversed(self.segments) if r is not row]:
                 if candidate.get('overlap_detected') or candidate.get('overlap_separated'): continue
+                if candidate is not row and not candidate.get("voice_correction_key"):
+                    continue
                 if candidate.get("speaker") != speaker or not candidate.get("speaker_manual"):
                     continue
                 start, end = float(candidate["start"]), float(candidate["end"])
@@ -349,15 +355,28 @@ class SpeakerMemoryControls:
             events.put(event)
         threading.Thread(target=work, daemon=True).start()
 
-    def resume_correction_learning(self):
-        if not self.result_path or not self.result_data:
+    def validate_saved_learning(self, rows, folder):
+        # A result is portable. Only the local voice library can attest to an enrollment.
+        fields = ("voice_correction_key", "voice_correction", "voice_learning_pending", "voice_rejected_profiles")
+        if not any(any(key in row for key in fields) for row in rows):
             return
-        pending = {}
-        for row in self.segments:
-            if row.get("speaker_manual") and row.get("voice_learning_pending"):
-                pending[row.get("speaker")] = row
-        for row in pending.values():
-            self.queue_corrected_speaker(row)
+        try:
+            profiles = self.speaker_memory.load()
+        except (ValueError, OSError):
+            profiles = {}
+        origin = str(Path(folder).resolve())
+        enrolled = {(key, clip["start"], clip["end"]): profile_id
+                    for profile_id, profile in profiles.items()
+                    for key, clip in profile.get("clips", {}).items() if clip["origin"] == origin}
+        for row in rows:
+            key = row.get("voice_correction_key")
+            owner = enrolled.get((key, row["start"], row["end"])) if isinstance(key, str) else None
+            if not owner:
+                for field in fields:
+                    row.pop(field, None)
+            else:
+                row.pop("voice_learning_pending", None)
+                row["voice_rejected_profiles"] = list(profiles[owner]["clips"][key].get("rejected", []))
 
     def resume_saved_voice_pools(self):
         if getattr(self, 'data_transfer_active', False):return

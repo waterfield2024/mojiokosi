@@ -2,6 +2,7 @@
 import math
 from pathlib import Path
 import wave
+from result_media import MEDIA_EXTENSIONS, result_file
 
 
 def utterance_interval(row):
@@ -19,15 +20,15 @@ def audio_source(data, folder):
     folder = Path(folder)
     # The WAV is still growing while capture runs. Never select an older FLAC
     # snapshot if a recording is in progress; neither source is modified here.
-    recording = folder / '.audio' / 'recording.wav'
-    if data.get('mode') == 'realtime' and not data.get('recording_complete', True) and recording.is_file():
+    recording = result_file(folder, '.audio/recording.wav', {'.wav'})
+    if data.get('mode') == 'realtime' and not data.get('recording_complete', True) and recording:
         return recording
     cached = resolve_cached_audio(data, folder)
     if cached:
         return cached
     if data.get('source_mode') == 'file' or data.get('mode') == 'file':
-        source = Path(data.get('source') or '')
-        if source.is_file():
+        source = result_file(folder, data.get('source'), MEDIA_EXTENSIONS)
+        if source:
             return source
     raise FileNotFoundError('発言の音声が見つかりません。保存した結果のフォルダー全体、または元の音声・動画を戻してください。')
 
@@ -35,9 +36,9 @@ def audio_source(data, folder):
 def playback_target(data, folder, row):
     start, end = utterance_interval(row)
     if row.get('separated_audio'):
-        root = Path(folder).resolve()
-        source = (root / row['separated_audio']).resolve()
-        if source.is_relative_to(root / '.audio' / 'separated') and source.is_file():
+        root = Path(folder).absolute()
+        source = result_file(root, row['separated_audio'], {'.wav'})
+        if source and source.is_relative_to(root / '.audio' / 'separated'):
             offset = float(row.get('separated_offset', 0))
             return source, (max(0., start-offset), max(.01, end-offset))
     source = audio_source(data, folder)

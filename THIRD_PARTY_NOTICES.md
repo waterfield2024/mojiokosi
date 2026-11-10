@@ -10,7 +10,7 @@ The URL and SHA-256 are pinned from https://www.python.org/ftp/python/index-wind
 | Component | Source / license |
 | --- | --- |
 | Python 3.12 | https://www.python.org/ — PSF |
-| PyTorch / TorchAudio 2.11.0 | https://pytorch.org/ — BSD-style; CUDA dependencies have NVIDIA terms |
+| PyTorch 2.14.1 / TorchAudio 2.11.1 | https://pytorch.org/ — BSD-style; CUDA dependencies have NVIDIA terms |
 | Transformers and Hugging Face libraries | https://github.com/huggingface/transformers — Apache-2.0 and component licenses |
 | Whisper models | https://github.com/openai/whisper — MIT; pinned Hugging Face revisions in `whisper_hf_manifest.json` |
 | Granite Speech 5.0 TurboCTC | https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc — Apache-2.0; revision in `granite_model_manifest.json` |
@@ -23,8 +23,8 @@ The URL and SHA-256 are pinned from https://www.python.org/ftp/python/index-wind
 | Silero VAD v5.0 | https://github.com/snakers4/silero-vad — MIT, Copyright (c) 2020-present Silero Team. Official ONNX weights pinned to commit `5cd2ba54db059f961e7545d4f211b44f005a6dfb`; URL and SHA-256 in `speech_gate.py`, license in `licenses/Silero-VAD-LICENSE`. |
 | Pyannote segmentation 3.0 ONNX | sherpa-onnx `speaker-segmentation-models` release; supplied model license retained in `licenses/segmentation-LICENSE` |
 | 3D-Speaker ERes2Net embedding | sherpa-onnx `speaker-recongition-models` release; https://github.com/modelscope/3D-Speaker — Apache-2.0 |
-| FFmpeg from imageio-ffmpeg 0.6.0 | https://github.com/imageio/imageio-ffmpeg — wrapper BSD-2-Clause; the downloaded FFmpeg executable has its own LGPL/GPL build terms; https://ffmpeg.org/legal.html |
-| Node.js 24.19.0 | https://nodejs.org/dist/v24.19.0/ — MIT and bundled component notices |
+| FFmpeg from imageio-ffmpeg 0.8.1 | https://github.com/imageio/imageio-ffmpeg — wrapper BSD-2-Clause; the downloaded FFmpeg executable has its own LGPL/GPL build terms; https://ffmpeg.org/legal.html |
+| Node.js 24.22.2 | https://nodejs.org/dist/v24.22.2/ — MIT and bundled component notices |
 | yt-dlp / yt-dlp-ejs | https://github.com/yt-dlp/yt-dlp — Unlicense and upstream component notices |
 | PyAudioWPatch | https://github.com/s0d3s/PyAudioWPatch — MIT / PortAudio notices |
 | windows-capture | https://github.com/NiiightmareXD/windows-capture — MIT |

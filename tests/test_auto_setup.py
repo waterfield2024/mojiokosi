@@ -24,7 +24,7 @@ class SetupReadiness(unittest.TestCase):
             path.write_text('# fixture\n', 'utf-8')
         (self.root / 'requirements-lock.txt').write_text('einops==0.8.1\n', 'utf-8')
         (self.root / 'whisper_hf_manifest.json').write_text(json.dumps({'base': {'files': {'model.safetensors': {}}}}), 'utf-8')
-        self.versions = {'torch': '2.11.0+cpu', 'torchaudio': '2.11.0+cpu', 'einops': '0.8.1'}
+        self.versions = {'torch': setup.TORCH_VERSION + '+cpu', 'torchaudio': setup.TORCHAUDIO_VERSION + '+cpu', 'einops': '0.8.1'}
         self.addCleanup(patch.stopall)
         patch('setup_local.importlib.metadata.version', side_effect=lambda name: self.versions[name]).start()
         for name in setup.required_assets('base', True, self.root):
@@ -60,7 +60,7 @@ class SetupReadiness(unittest.TestCase):
         model.unlink()
         self.assertTrue(setup.setup_ready(self.root))
         model.write_bytes(b'asset')
-        self.versions.update(torch='2.11.0+cu128', torchaudio='2.11.0+cu128')
+        self.versions.update(torch=setup.TORCH_VERSION + '+cu130', torchaudio=setup.TORCHAUDIO_VERSION + '+cu132')
         setup.save_state('cuda', 'auto', 'base', self.root)
         self.assertTrue(setup.setup_ready(self.root))
         model.unlink()
@@ -91,7 +91,7 @@ class SetupFlow(unittest.TestCase):
         patch.object(setup, 'ROOT', self.root).start()
         self.saved = patch.object(setup, 'read_state', return_value={}).start()
         self.run = patch.object(setup, 'run').start()
-        self.install_torch = patch.object(setup, 'install_torch').start()
+        self.install_torch = patch.object(setup, 'install_torch', return_value=False).start()
         self.save = patch.object(setup, 'save_state').start()
         self.gpu = patch.object(setup, 'nvidia_available', return_value=True).start()
         self.cuda = patch.object(setup, 'cuda_works', return_value=True).start()
@@ -100,21 +100,21 @@ class SetupFlow(unittest.TestCase):
         setup.install(self.args)
         commands = [call.args[0] for call in self.run.call_args_list]
         self.assertTrue(any('--prepare-noise' in command for command in commands))
-        self.save.assert_called_once_with('cuda', 'auto', 'base')
+        self.save.assert_called_once_with('cuda', 'auto', 'base', cpu_compat=False)
         self.assertEqual(self.sentinel.read_bytes(), b'preserve voices and settings')
 
     def test_explicit_cpu_and_model_persist_on_automatic_update(self):
         self.saved.return_value = {'requested_device': 'cpu', 'model': 'haas'}
         setup.install(self.args)
         self.cuda.assert_not_called()
-        self.save.assert_called_once_with('cpu', 'cpu', 'haas')
+        self.save.assert_called_once_with('cpu', 'cpu', 'haas', cpu_compat=False)
         self.assertFalse(any('--prepare-noise' in call.args[0] for call in self.run.call_args_list))
 
     def test_unusable_cuda_falls_back_to_cpu_only_in_auto_mode(self):
         self.cuda.return_value = False
         setup.install(self.args)
         self.assertEqual([call.args[1] for call in self.install_torch.call_args_list], ['cuda', 'cpu'])
-        self.save.assert_called_once_with('cpu', 'auto', 'base')
+        self.save.assert_called_once_with('cpu', 'auto', 'base', cpu_compat=False)
         self.args.device = 'cuda'
         self.save.reset_mock()
         with self.assertRaisesRegex(RuntimeError, 'CUDA'):
