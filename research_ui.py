@@ -76,10 +76,11 @@ def index_worker(root, snapshot, requests, events, stop):
                         generation, processed = number, 0
                         vectors_ready = False
                         sources, skipped = collect_sources(root, snapshot[0])
+                        events.put(('catalog', number, (sources, snapshot)))
                         index.sync(sources, stop.is_set,
                                    lambda n, total: events.put(('progress', number, f'検索索引を準備中… {n} / {total} 資料')))
                         batches = index.vector_batches(sources, encoder, stop.is_set) if encoder else None
-                        events.put(('ready', number, (sources, skipped, snapshot)))
+                        events.put(('ready', number, skipped))
                     elif action == 'model':
                         encoder = args
                         batches = index.vector_batches(sources, encoder, stop.is_set)
@@ -175,7 +176,7 @@ class ResearchWindow(tk.Toplevel):
         self.snapshot = (tuple(library.records), library.skipped) if library is not None else None
         self.transient(self.master)
         self.title('過去の発言・記事を調べる')
-        self.geometry('960x630')
+        self.geometry(f'{min(1200, self.winfo_screenwidth() - 40)}x{min(680, self.winfo_screenheight() - 80)}')
         self.minsize(630, 440)
         self.sources, self.hits = {}, []
         self.pages = {}
@@ -219,45 +220,90 @@ class ResearchWindow(tk.Toplevel):
         self.vector_status = tk.StringVar(self, value='初回の検索で意味検索モデルを準備します。')
         ttk.Label(options, textvariable=self.vector_status, wraplength=520).pack(side='left', padx=8)
         self.status = tk.StringVar(self)
-        result_bar = ttk.Frame(frame)
+        from transcript_library_ui import record_table
+        split = ttk.Panedwindow(frame, orient='horizontal')
+        split.pack(fill='both', expand=True, pady=(8, 0))
+        sidebar = ttk.Frame(split, padding=(0, 0, 6, 0))
+        split.add(sidebar, weight=0)
+        self.catalog_title = tk.StringVar(self, value='記録一覧（読み込み中…）')
+        ttk.Label(sidebar, textvariable=self.catalog_title).pack(anchor='w', pady=(0, 5))
+        font = ttk.Style(self).lookup('Treeview', 'font') or 'TkDefaultFont'
+        date_width = int(self.tk.call('font', 'measure', font, '2026-12-31')) + 12
+        self.record_list = record_table(sidebar, [('記録名', 155), ('種類', 50), ('日付', date_width)], 12)
+        self.record_list.column('記録名', stretch=True)
+        self.record_list.column('日付', stretch=False)
+        self.record_list.bind('<<TreeviewSelect>>', self.read_record)
+        right = ttk.Frame(split, padding=(6, 0, 0, 0))
+        split.add(right, weight=1)
+        self.results_view = ttk.Frame(right)
+        self.results_view.pack(fill='both', expand=True)
+        self.reader = ttk.Frame(right)
+        ttk.Button(self.reader, text='検索結果に戻る', command=self.show_results).pack(anchor='w', pady=(0, 5))
+        self.record_text = tk.Text(self.reader, wrap='word', width=32, height=12, state='disabled', padx=12, pady=8)
+        style_text(self.record_text)
+        self.record_text.tag_configure('title', font=('Yu Gothic UI', 13, 'bold'), spacing3=4)
+        record_scroll = ttk.Scrollbar(self.reader, command=self.record_text.yview)
+        self.record_text.configure(yscrollcommand=record_scroll.set)
+        record_scroll.pack(side='right', fill='y')
+        self.record_text.pack(fill='both', expand=True)
+        result_bar = ttk.Frame(self.results_view)
         result_bar.pack(fill='x', pady=6)
-        ttk.Label(result_bar, text='一致理由').pack(side='left')
-        self.reason = ttk.Combobox(result_bar, values=REASON_FILTERS, width=26, state='readonly')
+        filters = ttk.Frame(result_bar)
+        filters.grid(row=0, column=0, sticky='w')
+        ttk.Label(filters, text='一致理由').pack(side='left')
+        self.reason = ttk.Combobox(filters, values=REASON_FILTERS, width=26, state='readonly')
         self.reason.current(REASON_FILTERS.index(session.reason))
         self.reason.pack(side='left', padx=(4, 10))
         self.reason.bind('<<ComboboxSelected>>', self.filter_results)
-        ttk.Label(result_bar, textvariable=self.status, wraplength=470).pack(side='left')
-        panes = ttk.Panedwindow(frame, orient='vertical')
+        status_label = ttk.Label(result_bar, textvariable=self.status, wraplength=470)
+        status_label.grid(row=0, column=1, sticky='w')
+        panes = ttk.Panedwindow(self.results_view, orient='vertical')
         panes.pack(fill='both', expand=True)
         upper = ttk.Frame(panes)
         lower = ttk.Frame(panes)
         panes.add(upper, weight=1)
         panes.add(lower, weight=1)
-        from transcript_library_ui import record_table
-        font = ttk.Style(self).lookup('Treeview', 'font') or 'TkDefaultFont'
         reason_width = int(self.tk.call('font', 'measure', font, 'キーワード一致')) + 16
         self.table = record_table(upper, [('番号', 45), ('一致理由', reason_width), ('日付', 90), ('種類', 50),
                                           ('出典', 130), ('話者・位置', 120), ('原文の抜粋', 200)], 7)
+        hscroll = ttk.Scrollbar(self.table.master, orient='horizontal', command=self.table.xview)
+        self.table.configure(xscrollcommand=hscroll.set)
+        hscroll.pack(side='bottom', fill='x', before=self.table)
         self.table.bind('<<TreeviewSelect>>', self.preview)
         self.table.bind('<ButtonRelease-1>', lambda e: self.preview() if self.detail_title.get().startswith('AIの回答') else None)
         self.table.bind('<Return>', self.open_source)
         self.table.bind('<Double-1>', self.open_source)
         self.pager = ttk.Frame(upper)
-        self.prev_btn = ttk.Button(self.pager, text='前の100件', command=lambda: self.move_to_offset(self.offset - PAGE_SIZE))
-        self.next_btn = ttk.Button(self.pager, text='次の100件', command=lambda: self.move_to_offset(self.offset + PAGE_SIZE))
+        step = ttk.Frame(self.pager)
+        step.grid(row=0, column=0, sticky='w')
+        jump = ttk.Frame(self.pager)
+        jump.grid(row=0, column=1, sticky='w')
+        self.prev_btn = ttk.Button(step, text='前の100件', command=lambda: self.move_to_offset(self.offset - PAGE_SIZE))
+        self.next_btn = ttk.Button(step, text='次の100件', command=lambda: self.move_to_offset(self.offset + PAGE_SIZE))
         self.prev_btn.pack(side='left', padx=(0, 4))
         self.next_btn.pack(side='left')
-        ttk.Label(self.pager, text='ページ番号').pack(side='left', padx=(12, 4))
+        ttk.Label(jump, text='ページ番号').pack(side='left', padx=4)
         self.page_number = tk.StringVar(self)
-        self.page_entry = ttk.Entry(self.pager, textvariable=self.page_number, width=6, justify='right')
+        self.page_entry = ttk.Entry(jump, textvariable=self.page_number, width=6, justify='right')
         self.page_entry.pack(side='left')
         self.page_entry.bind('<FocusIn>', lambda event: self.page_entry.after_idle(self.page_entry.selection_range, 0, 'end'))
         self.page_entry.bind('<Return>', self.jump_to_page)
         self.page_entry.bind('<KP_Enter>', self.jump_to_page)
         self.page_range = tk.StringVar(self)
-        ttk.Label(self.pager, textvariable=self.page_range).pack(side='left', padx=4)
-        self.jump_btn = ttk.Button(self.pager, text='移動', command=self.jump_to_page)
+        ttk.Label(jump, textvariable=self.page_range).pack(side='left', padx=4)
+        self.jump_btn = ttk.Button(jump, text='移動', width=5, command=self.jump_to_page)
         self.jump_btn.pack(side='left')
+
+        def fit_controls(event):
+            width = self.results_view.winfo_width()
+            narrow = width < filters.winfo_reqwidth() + 160
+            status_label.grid_configure(row=1 if narrow else 0, column=0 if narrow else 1)
+            status_label.configure(wraplength=max(120, width - (0 if narrow else filters.winfo_reqwidth()) - 6))
+            stack = width < step.winfo_reqwidth() + jump.winfo_reqwidth()
+            jump.grid_configure(row=1 if stack else 0, column=0 if stack else 1)
+
+        self.results_view.bind('<Configure>', fit_controls)
+        jump.bind('<Configure>', fit_controls)
         bar = ttk.Frame(lower)
         bar.pack(fill='x', pady=5)
         self.detail_title = tk.StringVar(self, value='引用と前後の原文')
@@ -317,9 +363,55 @@ class ResearchWindow(tk.Toplevel):
     def current_request(self):
         return (self.question.get().strip(), self.kind.get(), self.order.get(), self.hybrid.get())
 
-    def search(self, event=None, *, keep_page=False):
+    def show_results(self):
+        self.reader.pack_forget()
+        self.results_view.pack(fill='both', expand=True)
+        if selected := self.record_list.selection():
+            self.record_list.selection_remove(*selected)
+            (self.table if self.hits else self.question).focus_set()
+
+    def fill_record_list(self):
+        selected = self.record_list.selection()
+        self.record_list.delete(*self.record_list.get_children())
+        records = sorted(self.sources.values(), key=lambda src: src.day, reverse=True)
+        for src in records:
+            self.record_list.insert('', 'end', iid=src.key, values=(src.title, src.kind, src.day or '日付不明'))
+        self.catalog_title.set(f'記録一覧（{len(records):,}件）')
+        key = selected[0] if selected and selected[0] in self.sources else None
+        if not self.question.get().strip() and records:
+            key = self.saved_key or key or records[0].key
+        if key in self.sources:
+            self.record_list.selection_set(key)
+            self.record_list.focus(key)
+            self.record_list.see(key)
+        else:
+            self.show_results()
+
+    def read_record(self, event=None):
+        selected = self.record_list.selection()
+        if not selected:
+            return
+        src = self.sources[selected[0]]
+        if src.kind == '発言':
+            body = '\n\n'.join(f'{location(src, row)}\n{p.text}' for row, p in enumerate(src.passages))
+            body = body or '発言はありません。'
+        else:
+            body = '\n\n'.join(p.text for p in src.passages)
+        metadata = '　'.join(filter(None, (src.kind, src.day or '日付不明', src.credit)))
+        self.record_text.configure(state='normal')
+        self.record_text.delete('1.0', 'end')
+        self.record_text.insert('end', src.title + '\n', 'title')
+        self.record_text.insert('end', metadata + '\n\n' + body)
+        self.record_text.configure(state='disabled')
+        self.record_text.yview_moveto(0)
+        self.results_view.pack_forget()
+        self.reader.pack(fill='both', expand=True)
+
+    def search(self, event=None, *, keep_page=False, reveal=True):
         if not self.ready:
             return
+        if reveal:
+            self.show_results()
         request = self.current_request()
         if len(request[0]) > QUESTION_LIMIT:
             self.status.set(f'質問は{QUESTION_LIMIT}文字以内で入力してください。')
@@ -347,23 +439,26 @@ class ResearchWindow(tk.Toplevel):
                     current = self.current_request()
                     if (op == 'vectors_ready' and self.hybrid.get() and current == self.last_request
                             and self.state() != 'withdrawn' and self.ai_job is None):
-                        self.search(keep_page=True)
+                        self.search(keep_page=True, reveal=False)
                 continue
             if op == 'summary':
                 self.ai_job = None
                 self.enable_ai()
             if number != self.number and op != 'unavailable':
                 continue
-            if op == 'ready':
+            if op == 'catalog':
+                self.sources, self.snapshot = value
+                self.fill_record_list()
+            elif op == 'ready':
                 self.ready = True
                 self.search_btn.configure(state='normal')
-                self.sources, skipped, self.snapshot = value
+                skipped = value
                 articles = sum(s.kind == '記事' for s in self.sources.values())
                 self.status.set(f'記録 {len(self.sources)-articles} 件・記事 {articles} 件を検索できます。'
                                 + (f'　読み込めない記録 {self.snapshot[1]} 件' if self.snapshot[1] else '')
                                 + (f'　読み込めない記事 {skipped} 件' if skipped else ''))
                 if self.question.get().strip():
-                    self.search(keep_page=self.current_request() == self.last_request)
+                    self.search(keep_page=self.current_request() == self.last_request, reveal=False)
                 elif self.saved_key in self.sources:
                     self.display([(self.saved_key, 0, '')])
                 self.saved_key = None

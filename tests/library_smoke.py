@@ -378,12 +378,42 @@ def main():
             assert '大阪' in window.word.cget('values') and '京都' not in window.word.cget('values')
             assert '大阪で開催します。' in window.body.get('1.0', 'end')
 
-            from research_library import REASON_FILTERS, save_article
+            from research_library import REASON_FILTERS, ResearchIndex, save_article
             from research_ui import ResearchWindow
             from tkinter import ttk
 
-            window.research_btn.invoke()
-            research = next(w for w in window.winfo_children() if isinstance(w, ResearchWindow))
+            def click_record(title):
+                listing = research.record_list
+                key = next(k for k in listing.get_children() if listing.set(k, '記録名') == title)
+                listing.see(key)
+                root.update()
+                x, y, width, height = listing.bbox(key, '記録名')
+                for event in ('<ButtonPress-1>', '<ButtonRelease-1>'):
+                    listing.event_generate(event, x=x + width//2, y=y + height//2)
+                wait_for(lambda: listing.selection() == (key,) and research.record_text.winfo_ismapped()
+                         and research.record_text.get('1.0', '1.end') == title)
+                return research.record_text.get('1.0', 'end-1c')
+
+            sync, resume_index = ResearchIndex.sync, threading.Event()
+            def delayed_sync(index, *args):
+                assert resume_index.wait(30)
+                return sync(index, *args)
+
+            with patch.object(ResearchIndex, 'sync', delayed_sync):
+                try:
+                    window.research_btn.invoke()
+                    research = window.research_window
+                    wait_for(lambda: research.record_text.winfo_ismapped())
+                    assert not research.ready and not research.question.get()
+                    assert research.record_text.get('1.0', '1.end') == '今回の会議'
+                    assert '大阪で開催します。' in research.record_text.get('1.0', 'end')
+                    assert research.record_list.winfo_rootx() < research.record_text.winfo_rootx()
+                    titles = [research.record_list.set(k, '記録名') for k in research.record_list.get_children()]
+                    assert titles == ['今回の会議', '以前の会議']
+                    text = click_record('以前の会議')
+                    assert '佐藤　00:00:24.000' in text and text.endswith('京都に戻ります。')
+                finally:
+                    resume_index.set()
             wait_for(lambda: research.ready)
             def button(parent, label):
                 for widget in parent.winfo_children():
@@ -397,17 +427,21 @@ def main():
             form = dialog.winfo_children()[0]
             form.grid_slaves(row=0, column=1)[0].insert(0, '開催地のお知らせ')
             form.grid_slaves(row=1, column=1)[0].insert(0, '2025-03-01')
+            form.grid_slaves(row=2, column=1)[0].insert(0, '広報室')
             textfile = Path(temp) / 'お知らせ.md'
             textfile.write_text('会場を決めました。\n京都で開催します。\n家計への負担を考え、当面は今の価格を維持します。', 'utf-8')
             with patch('tkinter.filedialog.askopenfilename', return_value=str(textfile)):
                 button(dialog, 'ファイルから本文を入力…').invoke()
             button(dialog, '記事を保存').invoke()
             wait_for(lambda: research.ready and len(research.sources) == 3)
+            text = click_record('開催地のお知らせ')
+            assert '記事　2025-03-01　広報室' in text and text.endswith('当面は今の価格を維持します。')
             research.hybrid.set(False)
             research.question.insert(0, '昔、京都について何と言っていた？')
             research.order.set('古い順')
             research.search_btn.invoke()
             wait_for(lambda: len(research.hits) == 3)
+            assert research.results_view.winfo_ismapped() and not research.record_list.selection()
             assert all(research.table.set(i, '一致理由') == 'キーワード一致' for i in research.table.get_children())
             assert research.table.set('0', '種類') == '記事' and research.table.set('0', '日付') == '2025-03-01'
             research.open_btn.invoke()
@@ -546,6 +580,12 @@ def main():
             with patch.object(research.requests, 'put', side_effect=AssertionError('pagination repeated the search')):
                 assert research.prev_btn.instate(['disabled']) and research.next_btn.winfo_ismapped()
                 assert research.page_entry.winfo_ismapped() and research.page_range.get() == '／ 全3ページ'
+                geometry = research.geometry()
+                research.geometry('630x440')
+                root.update()
+                assert research.record_list.winfo_ismapped() and research.jump_btn.winfo_ismapped()
+                research.geometry(geometry)
+                root.update()
                 research.page_entry.delete(0, 'end')
                 research.page_entry.insert(0, '３')
                 research.jump_btn.invoke()
@@ -572,6 +612,13 @@ def main():
                 research.open_btn.invoke()
                 assert research.detail.get('1.0', '1.end').startswith('[101]')
                 assert research.detail.get('citation', 'citation lineend') == '本文 101'
+                research.table.selection_set('2')
+                root.update()
+                click_record('以前の会議')
+                button(research.reader, '検索結果に戻る').invoke()
+                root.update()
+                assert research.results_view.winfo_ismapped() and research.table.selection() == ('2',)
+                assert research.reason.get() == 'キーワード一致（207件）' and research.page_number.get() == '2'
                 research.next_btn.invoke()
                 assert '201～207 件' in research.status.get() and len(research.hits) == 7
                 assert research.next_btn.instate(['disabled']) and research.table.set('6', '番号') == '[207]'
@@ -687,9 +734,13 @@ def main():
                     window.research_btn.invoke()
                     research = window.research_window
                     wait_for(lambda: research.provisional)
+                    click_record('以前の会議')
                 finally:
                     resume_vectors.set()
             wait_for(lambda: research.pages and research.pages['両方'].total == 101, timeout=240)
+            assert research.record_text.winfo_ismapped()
+            button(research.reader, '検索結果に戻る').invoke()
+            root.update()
             assert research.current_request() == ('2041年 値上げを見送った理由は？', '記事', '新しい順', True)
             assert research.reason.get() == '両方（101件）' and research.page_number.get() == '2'
             for reason, page in [('すべて', 4), ('キーワード一致', 3), ('意味が近い', 2), ('両方', 2)]:
