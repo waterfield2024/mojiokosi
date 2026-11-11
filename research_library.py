@@ -232,6 +232,10 @@ class ResearchIndex:
             raise ValueError('質問は500文字以内で入力してください。')
         topic, periods = question_dates(unicodedata.normalize('NFKC', question), today or date.today())
         keywords = list(dict.fromkeys(w for w in terms(topic, self.tokenizer) if w not in STOP))
+        # A change question needs the earlier statement even if it never says "changed".
+        if re.search(r'(?:どう|どのように)\s*(変わ|変化|違)', topic):
+            intent = {spelling_variant(w) for w in ('変わる', '変化', '違う', '違い')}
+            keywords = [w for w in keywords if w not in intent]
         if not keywords and not periods:
             raise ValueError('調べたい話題、話者名、または年を入力してください。')
         filters, params = [], []

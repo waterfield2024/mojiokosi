@@ -69,6 +69,17 @@ class ResearchTests(unittest.TestCase):
                 index.sync({})
                 self.assertFalse(index.search('保留')[0])
 
+    def test_change_question_finds_before_and_after_statements(self):
+        lines = ('予算の上限は100万円です。', '予算の上限が変わりました。', '予算の上限は150万円です。')
+        docs = {str(i): Source(str(i), '記事', 'お知らせ', f'202{i}-03-01', '', (Passage(line),))
+                for i, line in enumerate(lines)}
+        with closing(sqlite3.connect(':memory:')) as db:
+            index = ResearchIndex(db, self.tokenizer)
+            index.sync(docs)
+            hits, partial, _ = index.search('予算の上限はどう変わりましたか？', order='古い順')
+        self.assertEqual(hits, [('0', 0), ('1', 0), ('2', 0)])
+        self.assertFalse(partial)
+
     def test_article_import_and_calendar_bounds(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
