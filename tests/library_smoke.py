@@ -576,15 +576,25 @@ def main():
                     assert [item['id'] for item in summary.call_args.args[1]] == list(range(201, 208))
                 research.prev_btn.invoke()
                 assert research.hits[0][1] == 100 and '101～200 件' in research.status.get()
+                filter_reason('すべて')
+                assert research.page_number.get() == '1'
+                research.page_number.set('3')
+                research.jump_btn.invoke()
                 filter_reason('意味が近い')
                 assert not research.hits and not research.pager.winfo_ismapped()
                 filter_reason('キーワード一致')
-                assert research.hits[0][1] == 0 and research.prev_btn.instate(['disabled'])
+                assert research.hits[0][1] == 100 and research.page_number.get() == '2'
+                filter_reason('すべて')
+                assert research.table.set('0', '番号') == '[201]' and research.next_btn.instate(['disabled'])
+                filter_reason('キーワード一致')
             research.next_btn.invoke()
             research.order.set('新しい順')
             research.search_btn.invoke()
             wait_for(lambda: research.hits and research.table.set('0', '番号') == '[1]')
             assert research.reason.get() == 'キーワード一致（207件）'
+            filter_reason('すべて')
+            assert research.page_number.get() == '1' and research.table.set('0', '番号') == '[1]'
+            filter_reason('キーワード一致')
             research.kind.set('発言')
             research.search_btn.invoke()
             wait_for(lambda: research.reason.get() == 'キーワード一致（101件）')
@@ -603,6 +613,52 @@ def main():
             root.update()
             assert research.reason.get() == 'キーワード一致（101件）' and research.table.set('0', '番号') == '[101]'
             window.destroy()
+
+            prices = '家計への負担を考え、当面は今の価格を維持します。'
+            save_article(RESULTS, '値上げを見送った理由', '2041-01-01', '',
+                         '\n'.join(['京都で開催します。'] * 201 + [prices] * 101))
+            save_article(RESULTS, 'お知らせ', '2041-01-02', '', '\n'.join([prices] * 101))
+            direct.invoke()
+            research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
+            wait_for(lambda: research.ready)
+            research.question.insert(0, '2041年 値上げを見送った理由は？')
+            from research_vectors import load_encoder
+            resume_vectors = threading.Event()
+
+            def delayed_load(stopped):
+                assert resume_vectors.wait(30)
+                return load_encoder(stopped)
+
+            with patch('research_ui.load_encoder', side_effect=delayed_load):
+                try:
+                    research.search_btn.invoke()
+                    wait_for(lambda: research.pages and research.pages['キーワード一致'].total == 302)
+                    filter_reason('キーワード一致')
+                    research.page_number.set('4')
+                    research.jump_btn.invoke()
+                    filter_reason('すべて')
+                    research.next_btn.invoke()
+                finally:
+                    resume_vectors.set()
+            wait_for(lambda: research.pages and research.pages['両方'].total == 101, timeout=240)
+            assert research.page_number.get() == '2'
+            with patch.object(research.requests, 'put', side_effect=AssertionError('filter repeated the search')):
+                filter_reason('キーワード一致')
+                assert research.page_number.get() == '3' and research.next_btn.instate(['disabled'])
+                for reason in ('意味が近い', '両方'):
+                    filter_reason(reason)
+                    assert research.page_number.get() == '1'
+                    research.next_btn.invoke()
+                filter_reason('すべて')
+                research.page_number.set('4')
+                research.jump_btn.invoke()
+                for reason, page in [('キーワード一致', 3), ('意味が近い', 2), ('両方', 2), ('すべて', 4)]:
+                    filter_reason(reason)
+                    assert research.page_number.get() == str(page)
+                    assert research.table.set('0', '番号') == f'[{(page-1)*100+1}]'
+                    if reason != 'すべて':
+                        assert research.table.set('0', '一致理由') == reason
+            research.destroy()
             assert not errors, errors
         finally:
             root.destroy()

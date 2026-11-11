@@ -177,6 +177,7 @@ class ResearchWindow(tk.Toplevel):
         self.minsize(630, 440)
         self.sources, self.hits = {}, []
         self.pages = {}
+        self.offset_by_reason = {}
         self.offset = 0
         self.requests, self.events = queue.Queue(), queue.Queue()
         self.stop = threading.Event()
@@ -290,6 +291,7 @@ class ResearchWindow(tk.Toplevel):
 
     def refresh(self, saved=None):
         self.number += 1
+        self.offset_by_reason.clear()
         self.offset = 0
         self.set_pages({})
         self.refresh_number = self.number
@@ -306,6 +308,7 @@ class ResearchWindow(tk.Toplevel):
             return
         self.number += 1
         if not keep_page:
+            self.offset_by_reason.clear()
             self.offset = 0
         self.set_pages({})
         self.last_question = self.question.get().strip()
@@ -367,8 +370,6 @@ class ResearchWindow(tk.Toplevel):
             self.next_btn.state(['disabled'])
 
     def filter_results(self, event=None):
-        if event is not None:
-            self.offset = 0
         if not self.pages:
             return
         if event is not None:
@@ -401,15 +402,17 @@ class ResearchWindow(tk.Toplevel):
             return
         if 0 <= new_offset < self.pages[REASON_FILTERS[self.reason.current()]].total:
             self.number += 1
-            self.offset = new_offset
-            self.show_page()
+            self.show_page(new_offset)
 
-    def show_page(self):
+    def show_page(self, offset=None):
         reason = REASON_FILTERS[self.reason.current()]
         page = self.pages[reason]
         last_page = (page.total + PAGE_SIZE - 1) // PAGE_SIZE
         last_offset = max(0, last_page - 1) * PAGE_SIZE
-        self.offset = min(self.offset, last_offset)
+        if offset is None:
+            offset = self.offset_by_reason.get(reason, 0)
+        self.offset = min(offset, last_offset)
+        self.offset_by_reason[reason] = self.offset
         self.page_number.set(str(self.offset // PAGE_SIZE + 1))
         self.page_range.set(f'／ 全{last_page:,}ページ')
         hits = page.hits[self.offset:self.offset + PAGE_SIZE]
