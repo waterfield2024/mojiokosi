@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from engine import RESULTS, timestamp
-from research_library import (KINDS, ORDERS, REASON_FILTERS, ResearchIndex, SemanticSearchError, collect_sources,
+from research_library import (KINDS, ORDERS, PAGE_SIZE, REASON_FILTERS, ResearchIndex, SemanticSearchError, collect_sources,
                               import_text, save_article, summarize)
 from research_vectors import load_encoder
 from transcript_library import load_records
@@ -93,11 +93,11 @@ def index_worker(root, snapshot, requests, events, stop):
                             threading.Thread(target=prepare_model, daemon=True).start()
                         active = encoder if hybrid and vectors_ready else None
                         try:
-                            result = index.search_pages_with_counts(question, kind, order, encoder=active)
+                            result = index.search_pages_with_counts(question, kind, order, encoder=active, limit=None)
                         except SemanticSearchError as exc:
                             vectors_ready = False
                             vector_error(exc)
-                            result = index.search_pages_with_counts(question, kind, order)
+                            result = index.search_pages_with_counts(question, kind, order, limit=None)
                         events.put(('hits', number, result))
                 except InterruptedError:
                     return
@@ -177,6 +177,7 @@ class ResearchWindow(tk.Toplevel):
         self.minsize(630, 440)
         self.sources, self.hits = {}, []
         self.pages = {}
+        self.offset = 0
         self.requests, self.events = queue.Queue(), queue.Queue()
         self.stop = threading.Event()
         self.number = 0
@@ -236,6 +237,11 @@ class ResearchWindow(tk.Toplevel):
         self.table.bind('<ButtonRelease-1>', lambda e: self.preview() if self.detail_title.get().startswith('AIの回答') else None)
         self.table.bind('<Return>', self.open_source)
         self.table.bind('<Double-1>', self.open_source)
+        self.pager = ttk.Frame(upper)
+        self.prev_btn = ttk.Button(self.pager, text='前の100件', command=lambda: self.change_page(-1))
+        self.next_btn = ttk.Button(self.pager, text='次の100件', command=lambda: self.change_page(1))
+        self.prev_btn.pack(side='left', padx=(0, 4))
+        self.next_btn.pack(side='left')
         bar = ttk.Frame(lower)
         bar.pack(fill='x', pady=5)
         self.detail_title = tk.StringVar(self, value='引用と前後の原文')
@@ -273,6 +279,7 @@ class ResearchWindow(tk.Toplevel):
 
     def refresh(self, saved=None):
         self.number += 1
+        self.offset = 0
         self.set_pages({})
         self.refresh_number = self.number
         self.last_request = None
@@ -283,10 +290,12 @@ class ResearchWindow(tk.Toplevel):
         self.status.set('記事を保存しました。検索に反映中…' if saved else '発言と記事の検索索引を準備中…')
         self.requests.put(('refresh', self.number, ()))
 
-    def search(self, event=None):
+    def search(self, event=None, *, keep_page=False):
         if not self.ready:
             return
         self.number += 1
+        if not keep_page:
+            self.offset = 0
         self.set_pages({})
         self.last_question = self.question.get().strip()
         self.last_request = (self.last_question, self.kind.get(), self.order.get(), self.hybrid.get())
@@ -306,7 +315,7 @@ class ResearchWindow(tk.Toplevel):
                     current = (self.question.get().strip(), self.kind.get(), self.order.get(), self.hybrid.get())
                     if (op == 'vectors_ready' and self.hybrid.get() and current == self.last_request
                             and self.state() != 'withdrawn' and self.ai_job is None):
-                        self.search()
+                        self.search(keep_page=True)
                 continue
             if op == 'summary':
                 self.ai_job = None
@@ -341,21 +350,47 @@ class ResearchWindow(tk.Toplevel):
         labels = [f'{reason}（{pages[reason].total:,}件）' for reason in REASON_FILTERS] if pages else REASON_FILTERS
         self.reason.configure(values=labels)
         self.reason.current(selected)
+        if not pages:
+            self.pager.pack_forget()
+            self.prev_btn.state(['disabled'])
+            self.next_btn.state(['disabled'])
 
     def filter_results(self, event=None):
+        if event is not None:
+            self.offset = 0
         if not self.pages:
             return
         if event is not None:
             # AI citation numbers belong to the previously displayed rows.
             self.number += 1
+        self.show_page()
+
+    def change_page(self, direction):
+        if not self.pages:
+            return
+        new_offset = self.offset + direction * PAGE_SIZE
+        if 0 <= new_offset < self.pages[REASON_FILTERS[self.reason.current()]].total:
+            self.number += 1
+            self.offset = new_offset
+            self.show_page()
+
+    def show_page(self):
         reason = REASON_FILTERS[self.reason.current()]
         page = self.pages[reason]
-        hits = page.hits
+        last_offset = max(0, (page.total - 1) // PAGE_SIZE * PAGE_SIZE)
+        self.offset = min(self.offset, last_offset)
+        hits = page.hits[self.offset:self.offset + PAGE_SIZE]
+        self.prev_btn.state(['!disabled'] if self.offset else ['disabled'])
+        self.next_btn.state(['!disabled'] if self.offset < last_offset else ['disabled'])
+        if page.total > PAGE_SIZE:
+            self.pager.pack(side='bottom', anchor='e', pady=(3, 0), before=self.table.master)
+        else:
+            self.pager.pack_forget()
         self.display(hits)
         if hits:
             shown = f'{len(hits)} 件を表示'
-            if page.total > len(hits):
-                shown = f'{page.total:,} 件中 {len(hits)} 件を表示'
+            if page.total > PAGE_SIZE:
+                shown = f'{page.total:,} 件中 {self.offset + 1:,}～{self.offset + len(hits):,} 件を表示'
             self.status.set(('全文検索は一部の検索語で照合　' if page.partial else '') + shown)
         elif reason in ('意味が近い', '両方') and not self.hybrid.get():
             self.status.set('この一致理由で探すには「意味の近い表現も探す」をオンにしてください。')
@@ -377,9 +412,10 @@ class ResearchWindow(tk.Toplevel):
         self.detail_title.set('AIの回答（番号をクリックすると原文を表示）')
         self.set_detail('')
         self.detail.configure(state='normal')
-        for part in re.split(r'(\[\d{1,3}\])', answer):
-            if re.fullmatch(r'\[\d{1,3}\]', part) and 1 <= int(part[1:-1]) <= len(self.hits):
-                index = int(part[1:-1]) - 1
+        references = {f'[{self.offset + i + 1}]': i for i in range(len(self.hits))}
+        for part in re.split(r'(\[\d+\])', answer):
+            if part in references:
+                index = references[part]
                 tag = f'ref_{index}'
                 self.detail.tag_configure(tag, foreground=palette(self)['accent'], underline=True)
                 self.detail.insert('end', part, tag)
@@ -406,9 +442,10 @@ class ResearchWindow(tk.Toplevel):
         self.enable_ai()
         for i, (key, row, reason) in enumerate(hits):
             src = self.sources[key]
-            self.table.insert('', 'end', iid=str(i), values=(f'[{i+1}]', reason, src.day or '日付不明', src.kind,
+            self.table.insert('', 'end', iid=str(i), values=(f'[{self.offset+i+1}]', reason, src.day or '日付不明', src.kind,
                                                             src.title, location(src, row), src.passages[row].text[:180]))
         if hits:
+            self.table.yview_moveto(0)
             self.table.selection_set('0')
             self.table.focus('0')
             self.preview()
@@ -421,7 +458,7 @@ class ResearchWindow(tk.Toplevel):
         key, row = self.hits[i]
         src = self.sources[key]
         self.detail_title.set('記事の原文' if full else '引用と前後の原文')
-        self.set_detail(f'[{i+1}] {src.title}　{src.day or "日付不明"}　{src.credit}\n\n')
+        self.set_detail(f'[{self.offset+i+1}] {src.title}　{src.day or "日付不明"}　{src.credit}\n\n')
         self.detail.configure(state='normal')
         for n in range(0 if full else max(0, row-1), len(src.passages) if full else min(len(src.passages), row+2)):
             if n == row:
@@ -465,7 +502,7 @@ class ResearchWindow(tk.Toplevel):
         for i in chosen:
             key, row = self.hits[i]
             src = self.sources[key]
-            evidence.append(dict(id=i+1, kind=src.kind, title=src.title[:200], date=src.day or '日付不明',
+            evidence.append(dict(id=self.offset+i+1, kind=src.kind, title=src.title[:200], date=src.day or '日付不明',
                                  location=location(src, row), text=src.passages[row].text[:800]))
         question, number = self.last_question, self.number
         self.ai_job = number

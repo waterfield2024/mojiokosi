@@ -525,19 +525,59 @@ def main():
             assert all(label.endswith('（0件）') for label in research.reason.cget('values'))
             research.destroy()
             window.destroy()
-            save_article(RESULTS, '観測報告', '2040-01-01', '', '\n'.join(['天体観測の報告です。'] * 107))
+            save_article(RESULTS, '観測報告', '2040-01-01', '', '\n'.join(['天体観測の報告です。'] * 207))
+            save('20400103_090000_d', '観測会見', ['天体観測を始めます。'] * 100 + ['天体観測の会見を終わります。'])
             direct.invoke()
             research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
             wait_for(lambda: research.ready)
             research.hybrid.set(False)
+            research.kind.set('記事')
             research.question.insert(0, '2040年の天体観測')
             research.search_btn.invoke()
             wait_for(lambda: len(research.hits) == 100)
-            assert tuple(research.reason.cget('values')) == ('すべて（107件）', 'キーワード一致（107件）', '意味が近い（0件）', '両方（0件）')
-            assert '107 件中 100 件' in research.status.get()
+            assert tuple(research.reason.cget('values')) == ('すべて（207件）', 'キーワード一致（207件）', '意味が近い（0件）', '両方（0件）')
+            assert '207 件中 1～100 件' in research.status.get()
             filter_reason('キーワード一致')
-            assert research.reason.get() == 'キーワード一致（107件）' and len(research.hits) == 100
-            research.destroy()
+            with patch.object(research.requests, 'put', side_effect=AssertionError('pagination repeated the search')):
+                assert research.prev_btn.instate(['disabled']) and research.next_btn.winfo_ismapped()
+                research.next_btn.invoke()
+                assert research.reason.get() == 'キーワード一致（207件）' and len(research.hits) == 100
+                assert '101～200 件' in research.status.get() and research.table.set('0', '番号') == '[101]'
+                assert research.hits[0][1] == 100
+                research.open_btn.invoke()
+                assert research.detail.get('1.0', '1.end').startswith('[101]')
+                assert research.detail.get('citation', 'citation lineend') == '本文 101'
+                research.next_btn.invoke()
+                assert '201～207 件' in research.status.get() and len(research.hits) == 7
+                assert research.next_btn.instate(['disabled']) and research.table.set('6', '番号') == '[207]'
+                with patch('research_ui.summarize', return_value='観測の報告です。 [207]') as summary:
+                    research.ai_btn.invoke()
+                    wait_for(lambda: research.ai_job is None and bool(research.detail.tag_ranges('ref_6')))
+                    assert [item['id'] for item in summary.call_args.args[1]] == list(range(201, 208))
+                research.prev_btn.invoke()
+                assert research.hits[0][1] == 100 and '101～200 件' in research.status.get()
+                filter_reason('意味が近い')
+                assert not research.hits and not research.pager.winfo_ismapped()
+                filter_reason('キーワード一致')
+                assert research.hits[0][1] == 0 and research.prev_btn.instate(['disabled'])
+            research.next_btn.invoke()
+            research.order.set('新しい順')
+            research.search_btn.invoke()
+            wait_for(lambda: research.hits and research.table.set('0', '番号') == '[1]')
+            assert research.reason.get() == 'キーワード一致（207件）'
+            research.kind.set('発言')
+            research.search_btn.invoke()
+            wait_for(lambda: research.reason.get() == 'キーワード一致（101件）')
+            research.next_btn.invoke()
+            assert len(research.hits) == 1 and research.table.set('0', '番号') == '[101]'
+            research.open_btn.invoke()
+            window = research.library
+            wait_for(lambda: window.focus_row == 100)
+            assert window.body.get('match.first', 'match.last') == '天体観測の会見を終わります。'
+            window.research_btn.invoke()
+            root.update()
+            assert research.reason.get() == 'キーワード一致（101件）' and research.table.set('0', '番号') == '[101]'
+            window.destroy()
             assert not errors, errors
         finally:
             root.destroy()

@@ -227,6 +227,33 @@ class ResearchTests(unittest.TestCase):
             self.assertEqual({reason: page.total for reason, page in dates.items()},
                              {'すべて': 272, 'キーワード一致': 0, '意味が近い': 0, '両方': 0})
 
+    def test_every_page_preserves_first_page_order_counts_and_filtered_membership(self):
+        texts = ('予算', '資金を調達します。', '予算を検討します。', '明日は晴れます。')
+        lines = tuple(Passage(text) for _ in range(103) for text in texts)
+        sources = {k: Source(k, '記事', '資料', day, '', lines) for k, day in (
+            ('a', '2025-02-01'), ('b', '2025-01-01'))}
+        with closing(sqlite3.connect(':memory:')) as db:
+            index = ResearchIndex(db, self.tokenizer)
+            index.sync(sources)
+            semantic = db.execute('SELECT p.source,p.ordinal,s.day,p.id FROM parts p JOIN sources s ON s.key=p.source '
+                                  'WHERE p.ordinal % 4 IN (1,2) ORDER BY p.id DESC').fetchall()
+            with patch.object(index, 'semantic_hits', return_value=semantic):
+                for order in ('関連度順', '古い順', '新しい順'):
+                    with self.subTest(order=order):
+                        first = index.search_pages_with_counts('2025年の予算', '記事', order, encoder=object())
+                        pages = index.search_pages_with_counts('2025年の予算', '記事', order, encoder=object(), limit=None)
+                        all_rows = pages['すべて'].hits
+                        self.assertEqual(len({(k, row) for k, row, reason in all_rows}), 618)
+                        for reason, page in pages.items():
+                            self.assertEqual(page.hits[:100], first[reason].hits)
+                            self.assertEqual(len(page.hits), page.total)
+                            if reason != 'すべて':
+                                self.assertEqual(page.hits, [r for r in all_rows if r[2] == reason])
+                                self.assertEqual(len(page.hits[200:]), 6)
+                        if order != '関連度順':
+                            days = [sources[key].day for key, row, reason in all_rows]
+                            self.assertEqual(days, sorted(days, reverse=order == '新しい順'))
+
     def test_full_text_available_while_model_loads_and_after_failure(self):
         from research_ui import index_worker
         requests, events = queue.Queue(), queue.Queue()

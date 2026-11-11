@@ -20,6 +20,7 @@ ARTICLE_LIMIT = 2 * 1024 * 1024
 KINDS = ('すべて', '発言', '記事')
 ORDERS = ('関連度順', '古い順', '新しい順')
 REASON_FILTERS = ('すべて', 'キーワード一致', '意味が近い', '両方')
+PAGE_SIZE = 100
 
 
 class SemanticSearchError(Exception):
@@ -317,6 +318,7 @@ class ResearchIndex:
         return {reason: (page.hits, page.partial, page.total > len(page.hits)) for reason, page in pages.items()}
 
     def search_pages_with_counts(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100, encoder=None):
+        """Use limit=None to retain ordered passage references for browsing all pages."""
         if len(question) > 500:
             raise ValueError('質問は500文字以内で入力してください。')
         topic, periods = question_dates(unicodedata.normalize('NFKC', question), today or date.today())
@@ -360,24 +362,26 @@ class ResearchIndex:
             source_sql += ' WHERE ' + ' AND '.join(filters)
         sql = f'SELECT s.key,p.ordinal,s.day,p.id {source_sql}'
         sql += f" ORDER BY {ranking} (s.day=''), s.day {direction}, s.key, p.ordinal LIMIT ?"
-        ranking_window = limit + 1  # Preserve the FTS rank window used for fusion.
+        ranking_window = (PAGE_SIZE if limit is None else limit) + 1
         # At most len(semantic) lexical rows can be excluded by a keyword-only filter.
-        fetch_limit = ranking_window + len(semantic)
+        fetch_limit = -1 if limit is None else ranking_window + len(semantic)
         for joiner in (' AND ', ' OR '):
             args = params + ([joiner.join(groups)] if groups else [])
             lexical = list(self.db.execute(sql, [*args, fetch_limit]))
             if lexical or len(groups) <= 1:
                 break
         partial = bool(lexical) and joiner == ' OR '
-        lexical_ids = {hit[3] for hit in lexical}
         semantic_ids = {hit[3] for hit in semantic}
-        hits = lexical[:ranking_window]
+        # Membership is only needed for candidates that could match both searches.
+        overlap_ids = semantic_ids.intersection(hit[3] for hit in lexical) if semantic_ids else set()
+        hits = lexical
         if semantic:
-            # Reciprocal rank fusion keeps BM25 and cosine on their own scales.
-            scores = {}
-            for ranking in (hits, semantic):
-                for rank, item in enumerate(ranking, 1):
-                    scores[item] = scores.get(item, 0) + 1 / (60 + rank)
+            # Keep the existing lexical window for dual-match boosts. Later FTS-only
+            # hits retain their own rank so subsequent pages have the same ordering.
+            scores = {item: 1 / (60 + rank) for rank, item in enumerate(lexical, 1)
+                      if rank <= ranking_window or item[3] not in semantic_ids}
+            for rank, item in enumerate(semantic, 1):
+                scores[item] = scores.get(item, 0) + 1 / (60 + rank)
             if order == '関連度順':
                 hits = sorted(scores, key=scores.get, reverse=True)
             else:
@@ -386,18 +390,18 @@ class ResearchIndex:
                 hits.sort(key=lambda r: not r[2])
         if semantic and len(lexical) == fetch_limit:
             # Semantic candidates can still match FTS beyond the fetched keyword rows.
-            missing = list(semantic_ids - lexical_ids)
+            missing = list(semantic_ids - overlap_ids)
             for offset in range(0, len(missing), 300):
                 page = missing[offset:offset+300]
                 slots = ','.join('?' for _ in page)
                 matches = self.db.execute(f'SELECT rowid FROM words WHERE words MATCH ? AND rowid IN ({slots})',
                                           [joiner.join(groups), *page])
-                lexical_ids.update(part for (part,) in matches)
+                overlap_ids.update(part for (part,) in matches)
 
         lexical_total = len(lexical)
         if lexical_total == fetch_limit:
             lexical_total = self.db.execute(f'SELECT count(*) {source_sql}', args).fetchone()[0]
-        both = len(semantic_ids.intersection(lexical_ids))
+        both = len(overlap_ids)
         semantic_only = len(semantic_ids) - both
         totals = {'すべて': lexical_total + semantic_only,
                   'キーワード一致': lexical_total - both if groups else 0,
@@ -408,23 +412,14 @@ class ResearchIndex:
             if not groups:
                 reason = '日付一致'
             elif part in semantic_ids:
-                reason = '両方' if part in lexical_ids else '意味が近い'
+                reason = '両方' if part in overlap_ids else '意味が近い'
             else:
                 reason = 'キーワード一致'
             hit = (key, ordinal, reason)
-            if len(pages['すべて']) < limit:
+            if limit is None or len(pages['すべて']) < limit:
                 pages['すべて'].append(hit)
-            if reason in pages and len(pages[reason]) < limit:
+            if reason in pages and (limit is None or len(pages[reason]) < limit):
                 pages[reason].append(hit)
-
-        # The original fusion window supplies the same ordering as the unfiltered
-        # search. Continue the FTS order to fill a keyword-only page if necessary.
-        keywords_only = pages['キーワード一致']
-        for key, ordinal, _, part in lexical[ranking_window:]:
-            if len(keywords_only) >= limit:
-                break
-            if part not in semantic_ids:
-                keywords_only.append((key, ordinal, 'キーワード一致'))
         return {reason: SearchPage(rows, totals[reason] > 0 and partial and reason != '意味が近い', totals[reason])
                 for reason, rows in pages.items()}
 
