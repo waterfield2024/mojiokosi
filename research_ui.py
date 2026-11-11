@@ -238,10 +238,21 @@ class ResearchWindow(tk.Toplevel):
         self.table.bind('<Return>', self.open_source)
         self.table.bind('<Double-1>', self.open_source)
         self.pager = ttk.Frame(upper)
-        self.prev_btn = ttk.Button(self.pager, text='前の100件', command=lambda: self.change_page(-1))
-        self.next_btn = ttk.Button(self.pager, text='次の100件', command=lambda: self.change_page(1))
+        self.prev_btn = ttk.Button(self.pager, text='前の100件', command=lambda: self.move_to_offset(self.offset - PAGE_SIZE))
+        self.next_btn = ttk.Button(self.pager, text='次の100件', command=lambda: self.move_to_offset(self.offset + PAGE_SIZE))
         self.prev_btn.pack(side='left', padx=(0, 4))
         self.next_btn.pack(side='left')
+        ttk.Label(self.pager, text='ページ番号').pack(side='left', padx=(12, 4))
+        self.page_number = tk.StringVar(self)
+        self.page_entry = ttk.Entry(self.pager, textvariable=self.page_number, width=6, justify='right')
+        self.page_entry.pack(side='left')
+        self.page_entry.bind('<FocusIn>', lambda event: self.page_entry.after_idle(self.page_entry.selection_range, 0, 'end'))
+        self.page_entry.bind('<Return>', self.jump_to_page)
+        self.page_entry.bind('<KP_Enter>', self.jump_to_page)
+        self.page_range = tk.StringVar(self)
+        ttk.Label(self.pager, textvariable=self.page_range).pack(side='left', padx=4)
+        self.jump_btn = ttk.Button(self.pager, text='移動', command=self.jump_to_page)
+        self.jump_btn.pack(side='left')
         bar = ttk.Frame(lower)
         bar.pack(fill='x', pady=5)
         self.detail_title = tk.StringVar(self, value='引用と前後の原文')
@@ -365,10 +376,29 @@ class ResearchWindow(tk.Toplevel):
             self.number += 1
         self.show_page()
 
-    def change_page(self, direction):
+    def jump_to_page(self, event=None):
+        if not self.pages:
+            return 'break'
+        total = self.pages[REASON_FILTERS[self.reason.current()]].total
+        last_page = (total + PAGE_SIZE - 1) // PAGE_SIZE
+        value = self.page_number.get().strip()
+        try:
+            target = int(value) if value.isdecimal() else 0
+        except ValueError:
+            target = 0
+        if 1 <= target <= last_page:
+            self.move_to_offset((target - 1) * PAGE_SIZE)
+            if event is not None:
+                self.page_entry.selection_range(0, 'end')
+        elif last_page:
+            self.page_range.set(f'1～{last_page:,}の整数を入力してください')
+            self.page_entry.focus_set()
+            self.page_entry.selection_range(0, 'end')
+        return 'break'
+
+    def move_to_offset(self, new_offset):
         if not self.pages:
             return
-        new_offset = self.offset + direction * PAGE_SIZE
         if 0 <= new_offset < self.pages[REASON_FILTERS[self.reason.current()]].total:
             self.number += 1
             self.offset = new_offset
@@ -377,8 +407,11 @@ class ResearchWindow(tk.Toplevel):
     def show_page(self):
         reason = REASON_FILTERS[self.reason.current()]
         page = self.pages[reason]
-        last_offset = max(0, (page.total - 1) // PAGE_SIZE * PAGE_SIZE)
+        last_page = (page.total + PAGE_SIZE - 1) // PAGE_SIZE
+        last_offset = max(0, last_page - 1) * PAGE_SIZE
         self.offset = min(self.offset, last_offset)
+        self.page_number.set(str(self.offset // PAGE_SIZE + 1))
+        self.page_range.set(f'／ 全{last_page:,}ページ')
         hits = page.hits[self.offset:self.offset + PAGE_SIZE]
         self.prev_btn.state(['!disabled'] if self.offset else ['disabled'])
         self.next_btn.state(['!disabled'] if self.offset < last_offset else ['disabled'])

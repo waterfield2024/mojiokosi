@@ -540,7 +540,27 @@ def main():
             filter_reason('キーワード一致')
             with patch.object(research.requests, 'put', side_effect=AssertionError('pagination repeated the search')):
                 assert research.prev_btn.instate(['disabled']) and research.next_btn.winfo_ismapped()
+                assert research.page_entry.winfo_ismapped() and research.page_range.get() == '／ 全3ページ'
+                research.page_entry.delete(0, 'end')
+                research.page_entry.insert(0, '３')
+                research.jump_btn.invoke()
+                assert research.reason.get() == 'キーワード一致（207件）' and research.page_number.get() == '3'
+                assert research.table.set('0', '番号') == '[201]' and research.hits[0][1] == 200
+                research.open_btn.invoke()
+                assert research.detail.get('citation', 'citation lineend') == '本文 201'
+                for invalid in ('', '0', '4', '-1', '1.5', '三'):
+                    research.page_number.set(invalid)
+                    research.jump_btn.invoke()
+                    assert '1～3' in research.page_range.get() and research.table.set('0', '番号') == '[201]'
+                    assert research.detail_title.get() == '記事の原文'
+                research.page_entry.focus_force()
+                root.update()
+                research.page_number.set(' 1 ')
+                research.page_entry.event_generate('<Return>')
+                wait_for(lambda: research.table.set('0', '番号') == '[1]')
+                assert research.page_number.get() == '1' and research.page_range.get() == '／ 全3ページ'
                 research.next_btn.invoke()
+                assert research.page_number.get() == '2'
                 assert research.reason.get() == 'キーワード一致（207件）' and len(research.hits) == 100
                 assert '101～200 件' in research.status.get() and research.table.set('0', '番号') == '[101]'
                 assert research.hits[0][1] == 100
@@ -568,7 +588,12 @@ def main():
             research.kind.set('発言')
             research.search_btn.invoke()
             wait_for(lambda: research.reason.get() == 'キーワード一致（101件）')
-            research.next_btn.invoke()
+            assert research.page_range.get() == '／ 全2ページ' and research.page_number.get() == '1'
+            research.page_number.set('3')
+            research.jump_btn.invoke()
+            assert research.table.set('0', '番号') == '[1]' and '1～2' in research.page_range.get()
+            research.page_number.set('2')
+            research.jump_btn.invoke()
             assert len(research.hits) == 1 and research.table.set('0', '番号') == '[101]'
             research.open_btn.invoke()
             window = research.library
