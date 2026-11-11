@@ -59,7 +59,12 @@ def main():
         try:
             window = open_records()
             assert [r.title for r in window.records] == ['今回の会議', '以前の会議']
-            x, y, width, height = window.body.bbox('2.0')
+            assert not window.waveform.winfo_ismapped()
+            window.body.see('2.0')
+            root.update()
+            bounds = window.body.bbox('2.0')
+            assert bounds, (window.geometry(), window.body.winfo_geometry(), window.hits.winfo_geometry())
+            x, y, width, height = bounds
             window.body.event_generate('<ButtonPress-1>', x=x+width//2, y=y+height//2)
             window.body.event_generate('<ButtonRelease-1>', x=x+width//2, y=y+height//2)
             root.update()

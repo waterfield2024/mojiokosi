@@ -178,7 +178,6 @@ class TranscriptLibrary(tk.Toplevel):
         self.range_reset = ttk.Button(bounds, text='全体に戻す', width=9, command=self.reset_range, state='disabled')
         self.range_reset.pack(side='left')
         self.waveform = RangeWaveform(related, self.range_start, self.range_end, self.apply_waveform_range, compact=True)
-        self.waveform.pack(side='bottom', fill='x', pady=(3, 0))
         self.range_start.trace_add('write', self.preview_range_fields)
         self.range_end.trace_add('write', self.preview_range_fields)
         self.hits = record_table(related, [('日付', 80), ('記録名', 97), ('時刻・話者', 108),
@@ -440,6 +439,13 @@ class TranscriptLibrary(tk.Toplevel):
         if target is None and key == self.range_key and (key is None or self.range_duration is not None):
             return
         self.waveform.cancel_drag(restore=False)
+        if hit is None:
+            self.waveform.pack_forget()
+            self.hits.configure(height=5)
+        elif not self.waveform.winfo_manager():
+            # Use two result rows for the waveform so a small window keeps the transcript visible.
+            self.hits.configure(height=3)
+            self.waveform.pack(side='bottom', fill='x', before=self.hits.master, pady=(3, 0))
         self.range_key, self.range_duration = key, None
         source, start = None, 0.
         if hit:
