@@ -90,6 +90,10 @@ def main():
                 root.update()
                 return round(wave_view.time_at(x), 3)
 
+            def click_wave(seconds):
+                wave_mouse('<ButtonPress-1>', seconds)
+                return wave_mouse('<ButtonRelease-1>', seconds)
+
             def wait_for(predicate):
                 deadline = time.monotonic() + 10
                 while not predicate() and time.monotonic() < deadline and not errors:
@@ -141,6 +145,27 @@ def main():
                 window.range_play.invoke()
                 assert window.audio_player.current.intervals == [(12.5, 13.25)]
                 assert completed_pcm(device.return_value) == expected[96000:240000]
+                position = click_wave(.85)
+                assert completed_pcm(device.return_value) == expected[round(position * 48000) * 4:240000]
+                assert wave_view.spans == [(.5, 1.25)] and window.grab_current() == window
+                writing, resume = threading.Event(), threading.Event()
+
+                def hold_output(pcm):
+                    writing.set()
+                    resume.wait(5)
+
+                device.return_value.write.side_effect = hold_output
+                try:
+                    click_wave(.9)
+                    wait_for(writing.is_set)
+                    old = window.audio_player.current
+                    position = click_wave(.6)
+                    assert old.cancel.is_set() and window.audio_player.current.generation != old.generation
+                    device.return_value.write.reset_mock()
+                finally:
+                    device.return_value.write.side_effect = None
+                    resume.set()
+                assert completed_pcm(device.return_value) == expected[round(position * 48000) * 4:240000]
                 for invalid in ('0.4', '5', 'invalid'):
                     window.range_end.set(invalid)
                     window.range_play.invoke()
@@ -184,6 +209,24 @@ def main():
                 assert pending not in root.tk.call('after', 'info')
                 assert window.audio_player.current.intervals == [(.5+low, .5+high)] and window.audio_player.current.speed == .75
                 wait_for(lambda: window.repeat_timer is not None)
+                pending = window.repeat_timer
+                position = click_wave(.7)
+                inside = window.audio_player.current
+                assert pending not in root.tk.call('after', 'info')
+                assert inside.intervals == [(.5 + position, .5 + high)] and inside.speed == .75
+                wait_for(lambda: window.audio_player.current is not inside and window.repeat_timer is not None)
+                assert window.audio_player.current.intervals == [(.5 + low, .5 + high)]
+                position = click_wave(1.4)
+                outside = window.audio_player.current
+                assert outside.intervals == [(.5 + position, 2.5)]
+                wait_for(lambda: window.audio_player.current is not outside and window.repeat_timer is not None)
+                assert window.audio_player.current.intervals == outside.intervals
+                assert wave_view.spans == [(low, high)] and window.audio_ranges[window.range_key] == (low, high)
+                pending = window.repeat_timer
+                click_wave(2)
+                assert window.playing_hit is None and pending not in root.tk.call('after', 'info')
+                assert '発言の最後' in window.audio_status.get()
+                window.range_play.invoke()
                 window.range_reset.invoke()
                 assert wave_view.spans == [(0, 2)]
                 assert window.audio_player.current.intervals == [(.5, 2.5)]
@@ -220,6 +263,15 @@ def main():
                 second = window.audio_player.current
                 assert second.generation == window.audio_generation and second.generation != restarted.generation
                 assert second.intervals == [(.5, 2.5)] and second.speed == .75
+                wait_for(lambda: wave_view.data is not None and wave_view.origin == .5)
+                for target in (1.4, .3):
+                    previous = window.audio_player.current
+                    position = click_wave(target)
+                    second = window.audio_player.current
+                    assert previous.cancel.is_set() and second.generation != previous.generation
+                    assert second.intervals == [(.5 + position, 2.5)] and second.speed == .75
+                    assert wave_view.playhead == position
+                    window.audio_player.events.put((previous.generation, 'ended', None))
                 window.audio_player.events.put((restarted.generation, 'error', 'stale event'))
                 window.poll_audio()
                 assert window.audio_generation == second.generation
@@ -277,7 +329,7 @@ def main():
             assert not errors, errors
         finally:
             root.destroy()
-    print('Saved waveforms, handle and reverse drags, cancel, separated clips and variable-speed repeat: OK')
+    print('Saved waveform click-to-play and seek, range drags, separated clips and variable-speed repeat: OK')
 
 
 if __name__ == '__main__':

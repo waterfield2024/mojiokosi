@@ -175,7 +175,7 @@ class RangeWaveform(ttk.Frame):
             t=self.view[0]+(self.view[1]-self.view[0])*i/2
             label = f"{t:.3f}秒" if self.compact else timestamp(t)
             if self.compact and i == 1:
-                label = "離して反映 / Escで取消" if self.drag else "ドラッグで範囲を調整"
+                label = "離して反映 / Escで取消" if self.drag else "クリックで再生・移動 / ドラッグで範囲調整"
             canvas.create_text(self.x_at(t),height-8,text=label,anchor=("w","center","e")[i],fill=c["muted"],font=("Yu Gothic UI",8))
         canvas.create_line(0,top,0,bottom,fill=c["diff_whisper_ink"],width=2,tags="playhead",state="hidden")
         self.set_playhead(self.playhead)

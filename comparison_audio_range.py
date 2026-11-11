@@ -29,6 +29,23 @@ def audio_duration(value):
     except (TypeError,ValueError,OverflowError):return None
 
 
+def seek_audio_intervals(spans, position, duration):
+    """Return the first and repeat passes in the waveform's time coordinates."""
+    duration = audio_duration(duration)
+    position = float(position)
+    if duration is None or not math.isfinite(position):
+        raise ValueError("音声の再生位置を確認できません。")
+    if position >= duration - .0005:
+        return [], []
+    position = max(0., round(position, 3))
+    if position >= duration:
+        return [], []
+    for index, (start, end) in enumerate(spans):
+        if start <= position < end:
+            return [(position, end), *spans[index+1:]], list(spans)
+    return [(position, duration)], [(position, duration)]
+
+
 def checked_audio_range(start, end, duration=None, *, minimum=.1):
     start, end = parse_audio_time(start), parse_audio_time(end)
     duration = audio_duration(duration)

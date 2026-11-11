@@ -1,26 +1,11 @@
 """Listen to the active difference without blocking selection or merging."""
-import math
 import queue
 import tkinter as tk
 from tkinter import ttk
 
 from comparison_audio import REPEAT_PAUSE_MS,SPEED_LABELS,ComparisonAudioPlayer,comparison_audio_source,difference_intervals
-from comparison_audio_range import ComparisonRangeControls,audio_duration
+from comparison_audio_range import ComparisonRangeControls,seek_audio_intervals
 from engine import timestamp
-
-
-def seek_audio_intervals(spans,position,duration):
-    """Return this pass and subsequent passes, keeping the editor selection intact."""
-    duration=audio_duration(duration);position=float(position)
-    if duration is None or not math.isfinite(position):raise ValueError("音声の再生位置を確認できません。")
-    if position>=duration-.0005:return [],[]
-    position=min(duration,max(0.,round(position,3)))
-    if position>=duration:return [],[]
-    for index,(start,end) in enumerate(spans):
-        if start<=position<end:
-            return [(position,end),*spans[index+1:]],list(spans)
-    # Clicking outside the selection previews the remainder of the recording.
-    return [(position,duration)],[(position,duration)]
 
 
 class ComparisonAudioControls(ComparisonRangeControls):
