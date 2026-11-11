@@ -273,7 +273,7 @@ class ResearchIndex:
     def semantic_hits(self, topic, encoder, filters, params):
         import numpy as np
         query = encoder.encode([topic], query=True)[0]
-        sql = """SELECT s.key,p.ordinal,s.day,v.embedding FROM passage_vectors v
+        sql = """SELECT s.key,p.ordinal,s.day,p.id,v.embedding FROM passage_vectors v
                  JOIN parts p ON p.id=v.part JOIN sources s ON s.key=p.source WHERE v.version=?"""
         if filters:
             sql += ' AND ' + ' AND '.join(filters)
@@ -281,7 +281,7 @@ class ResearchIndex:
         named = {name for name in self.speakers if name + 'さん' in topic or name + '氏' in topic}
         scored = []
         while rows := cursor.fetchmany(512):
-            matrix = np.frombuffer(b''.join(row[3] for row in rows), dtype='<f4').reshape(len(rows), DIMENSION)
+            matrix = np.frombuffer(b''.join(row[-1] for row in rows), dtype='<f4').reshape(len(rows), DIMENSION)
             for row, score in zip(rows, matrix @ query):
                 if score >= 0.835:
                     if named:
@@ -290,7 +290,7 @@ class ResearchIndex:
                         if passage.speaker not in named and not any(
                                 name in field for name in named for field in (passage.text, src.title, src.credit)):
                             continue
-                    scored.append((float(score), row[:3]))
+                    scored.append((float(score), row[:-1]))
         if not scored:
             return []
         scored.sort(key=lambda item: (-item[0], item[1]))
@@ -298,6 +298,10 @@ class ResearchIndex:
         return [row for score, row in scored if score >= cutoff]
 
     def search(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100, encoder=None):
+        hits, partial, more = self.search_with_reasons(question, kind, order, today=today, limit=limit, encoder=encoder)
+        return [(key, row) for key, row, _ in hits], partial, more
+
+    def search_with_reasons(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100, encoder=None):
         if len(question) > 500:
             raise ValueError('質問は500文字以内で入力してください。')
         topic, periods = question_dates(unicodedata.normalize('NFKC', question), today or date.today())
@@ -336,7 +340,7 @@ class ResearchIndex:
             filters.append('words MATCH ?')
         ranking = 'bm25(words, 4, 1, 3),' if groups and order == '関連度順' else ''
         direction = 'ASC' if order == '古い順' else 'DESC'
-        sql = f'SELECT s.key,p.ordinal,s.day FROM {table}'
+        sql = f'SELECT s.key,p.ordinal,s.day,p.id FROM {table}'
         if filters:
             sql += ' WHERE ' + ' AND '.join(filters)
         sql += f" ORDER BY {ranking} (s.day=''), s.day {direction}, s.key, p.ordinal LIMIT ?"
@@ -346,6 +350,9 @@ class ResearchIndex:
             if hits or len(groups) <= 1:
                 break
         partial = bool(hits) and joiner == ' OR '
+        lexical_ids = {hit[3] for hit in hits}
+        semantic_ids = {hit[3] for hit in semantic}
+        lexical_truncated = len(hits) > limit
         if semantic:
             # Reciprocal rank fusion keeps BM25 and cosine on their own scales.
             scores = {}
@@ -358,7 +365,27 @@ class ResearchIndex:
                 hits = sorted(scores)  # Stable source and passage order within a day.
                 hits.sort(key=lambda r: r[2], reverse=direction == 'DESC')
                 hits.sort(key=lambda r: not r[2])
-        return [row[:2] for row in hits[:limit]], partial, len(hits) > limit
+        visible = hits[:limit]
+        if semantic and lexical_truncated:
+            # A displayed semantic hit can also match FTS below its ranking cutoff.
+            missing = [part for _, _, _, part in visible if part not in lexical_ids]
+            for offset in range(0, len(missing), 300):
+                page = missing[offset:offset+300]
+                slots = ','.join('?' for _ in page)
+                matches = self.db.execute(f'SELECT rowid FROM words WHERE words MATCH ? AND rowid IN ({slots})',
+                                          [joiner.join(groups), *page])
+                lexical_ids.update(part for (part,) in matches)
+
+        results = []
+        for key, ordinal, _, part in visible:
+            if not groups:
+                reason = '日付一致'
+            elif part in semantic_ids:
+                reason = '両方' if part in lexical_ids else '意味が近い'
+            else:
+                reason = 'キーワード一致'
+            results.append((key, ordinal, reason))
+        return results, partial, len(hits) > limit
 
 
 def summarize(question, evidence):

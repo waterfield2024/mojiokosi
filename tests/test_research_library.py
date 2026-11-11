@@ -66,6 +66,7 @@ class ResearchTests(unittest.TestCase):
                 with patch('research_library.terms', side_effect=AssertionError('unchanged source reindexed')):
                     index.sync({'a': src})
                 self.assertEqual(index.search('医師')[0], [('a', 0)])
+                self.assertEqual(index.search_with_reasons('医師')[0], [('a', 0, 'キーワード一致')])
                 edited = Source('a', '発言', '会議', '2024-12-01', '', (Passage('返事は保留します。', '伊藤', 2.),))
                 index.sync({'a': edited})
                 self.assertFalse(index.search('医者')[0])
@@ -147,6 +148,34 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(question_dates('2024年2月', today)[1], [('2024-02-01', '2024-02-29')])
         self.assertEqual(question_dates('一昨年から今年まで', today)[1], [('2024-01-01', '2026-12-31')])
 
+    def test_match_reasons_follow_both_searches_even_below_lexical_cutoff(self):
+        passages = ('予算', '予算', '予算', '予算を来年度へ繰り越す予定だ。', '当面は今の金額を維持します。')
+        source = Source('a', '発言', '記録', '2025-02-01', '', tuple(Passage(text) for text in passages))
+        docs = {'a': source}
+
+        class Encoder:
+            def encode(self, texts, *, query=False):
+                values = np.zeros((len(texts), DIMENSION), dtype='<f4')
+                for i, text in enumerate(texts):
+                    values[i, 0 if query or text in passages[3:] else 1] = 1
+                return values
+
+        with closing(sqlite3.connect(':memory:')) as db:
+            index = ResearchIndex(db, self.tokenizer)
+            index.sync(docs)
+            encoder = Encoder()
+            list(index.vector_batches(docs, encoder))
+            self.assertEqual(index.search('予算')[0][-1], ('a', 3))
+            hits, _, _ = index.search_with_reasons('予算', encoder=encoder, order='古い順')
+            self.assertEqual([reason for _, _, reason in hits],
+                             ['キーワード一致'] * 3 + ['両方', '意味が近い'])
+            self.assertEqual(index.search_with_reasons('予算', encoder=encoder, limit=2),
+                             ([('a', 0, 'キーワード一致'), ('a', 3, '両方')], False, True))
+            self.assertEqual(index.search_with_reasons('予算 宇宙船', limit=1),
+                             ([('a', 0, 'キーワード一致')], True, True))
+            self.assertEqual(index.search_with_reasons('2025年', encoder=encoder, limit=1)[0],
+                             [('a', 0, '日付一致')])
+
     def test_full_text_available_while_model_loads_and_after_failure(self):
         from research_ui import index_worker
         requests, events = queue.Queue(), queue.Queue()
@@ -173,11 +202,11 @@ class ResearchTests(unittest.TestCase):
                 wait_for('ready')
                 query = ('予算', '記事', '関連度順', True)
                 requests.put(('search', 2, query))
-                self.assertEqual(wait_for('hits')[0], [(key, 0)])
+                self.assertEqual(wait_for('hits')[0], [(key, 0, 'キーワード一致')])
                 release.set()
                 self.assertIn('全文検索を使えます', wait_for('vector_status'))
                 requests.put(('search', 3, query))
-                self.assertEqual(wait_for('hits')[0], [(key, 0)])
+                self.assertEqual(wait_for('hits')[0], [(key, 0, 'キーワード一致')])
             finally:
                 stop.set()
                 release.set()

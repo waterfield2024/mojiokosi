@@ -93,11 +93,11 @@ def index_worker(root, snapshot, requests, events, stop):
                             threading.Thread(target=prepare_model, daemon=True).start()
                         active = encoder if hybrid and vectors_ready else None
                         try:
-                            result = index.search(question, kind, order, encoder=active)
+                            result = index.search_with_reasons(question, kind, order, encoder=active)
                         except SemanticSearchError as exc:
                             vectors_ready = False
                             vector_error(exc)
-                            result = index.search(question, kind, order)
+                            result = index.search_with_reasons(question, kind, order)
                         events.put(('hits', number, result))
                 except InterruptedError:
                     return
@@ -220,8 +220,10 @@ class ResearchWindow(tk.Toplevel):
         panes.add(upper, weight=1)
         panes.add(lower, weight=1)
         from transcript_library_ui import record_table
-        self.table = record_table(upper, [('番号', 45), ('日付', 95), ('種類', 55), ('出典', 155),
-                                          ('話者・位置', 150), ('原文の抜粋', 200)], 7)
+        font = ttk.Style(self).lookup('Treeview', 'font') or 'TkDefaultFont'
+        reason_width = int(self.tk.call('font', 'measure', font, 'キーワード一致')) + 16
+        self.table = record_table(upper, [('番号', 45), ('一致理由', reason_width), ('日付', 90), ('種類', 50),
+                                          ('出典', 130), ('話者・位置', 120), ('原文の抜粋', 200)], 7)
         self.table.bind('<<TreeviewSelect>>', self.preview)
         self.table.bind('<ButtonRelease-1>', lambda e: self.preview() if self.detail_title.get().startswith('AIの回答') else None)
         self.table.bind('<Return>', self.open_source)
@@ -312,7 +314,7 @@ class ResearchWindow(tk.Toplevel):
                 if self.question.get().strip():
                     self.search()
                 elif self.saved_key in self.sources:
-                    self.display([(self.saved_key, 0)])
+                    self.display([(self.saved_key, 0, '')])
                 self.saved_key = None
             elif op == 'hits':
                 hits, partial, more = value
@@ -360,16 +362,16 @@ class ResearchWindow(tk.Toplevel):
                 return 'break'
 
     def display(self, hits):
-        self.hits = hits
+        self.hits = [(key, row) for key, row, _ in hits]
         self.table.delete(*self.table.get_children())
         self.detail_title.set('引用と前後の原文')
         self.set_detail('')
         self.open_btn.configure(state='normal' if hits else 'disabled')
         self.enable_ai()
-        for i, (key, row) in enumerate(hits):
+        for i, (key, row, reason) in enumerate(hits):
             src = self.sources[key]
-            self.table.insert('', 'end', iid=str(i), values=(f'[{i+1}]', src.day or '日付不明', src.kind, src.title,
-                                                            location(src, row), src.passages[row].text[:180]))
+            self.table.insert('', 'end', iid=str(i), values=(f'[{i+1}]', reason, src.day or '日付不明', src.kind,
+                                                            src.title, location(src, row), src.passages[row].text[:180]))
         if hits:
             self.table.selection_set('0')
             self.table.focus('0')
