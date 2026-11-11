@@ -22,6 +22,7 @@ def main():
 
         def save(name, title, lines, **last_segment):
             rows = [dict(start=12*i, end=12*i+2, speaker='speaker_0', text=text) for i, text in enumerate(lines)]
+            rows[0]['end'] = .18
             rows[-1].update(last_segment)
             save_result(dict(title=title, segments=rows, speakers={'speaker_0': '佐藤'}), RESULTS / name)
 
@@ -31,9 +32,10 @@ def main():
         recording = RESULTS / '20261010_091000_a/.audio/recording.wav'
         recording.parent.mkdir()
         expected = b''.join(level.to_bytes(2, 'little') * 48000 for level in (400, 900, 700, 1100))
+        short_pcm = b''.join(level.to_bytes(2, 'little') * 96 for level in range(180))
         with wave.open(str(recording), 'wb') as wav:
             wav.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
-            wav.writeframes(bytes(12 * 48000 * 4) + expected + bytes(12 * 48000 * 4))
+            wav.writeframes(short_pcm + bytes(12 * 48000 * 4 - len(short_pcm)) + expected + bytes(12 * 48000 * 4))
         separated = recording.parent / 'separated/voice.wav'
         separated.parent.mkdir()
         with wave.open(str(separated), 'wb') as wav:
@@ -93,6 +95,10 @@ def main():
             def click_wave(seconds):
                 wave_mouse('<ButtonPress-1>', seconds)
                 return wave_mouse('<ButtonRelease-1>', seconds)
+
+            def wheel_at(x, direction, shift=False):
+                unit = 1 if root.tk.call('tk', 'windowingsystem') == 'aqua' else 120
+                wave_view.canvas.event_generate('<MouseWheel>', x=x, y=32, delta=direction*unit, state=int(shift))
 
             def wait_for(predicate):
                 deadline = time.monotonic() + 10
@@ -159,6 +165,13 @@ def main():
                     click_wave(.9)
                     wait_for(writing.is_set)
                     old = window.audio_player.current
+                    x = round(wave_view.x_at(.6))
+                    for _ in range(6):
+                        wheel_at(x, 1)
+                    wait_for(lambda: wave_view._load_after is None and wave_view.generation is None)
+                    assert wave_view.data['step'] < wave_view.overview['step']
+                    assert abs(wave_view.data['start'] - wave_view.view[0]) < 1e-6
+                    assert window.audio_player.current is old and wave_view.spans == [(.5, 1.25)]
                     position = click_wave(.6)
                     assert old.cancel.is_set() and window.audio_player.current.generation != old.generation
                     device.return_value.write.reset_mock()
@@ -166,6 +179,9 @@ def main():
                     device.return_value.write.side_effect = None
                     resume.set()
                 assert completed_pcm(device.return_value) == expected[round(position * 48000) * 4:240000]
+                for _ in range(8):
+                    wheel_at(x, -1)
+                assert wave_view.view == (0., 2.)
                 for invalid in ('0.4', '5', 'invalid'):
                     window.range_end.set(invalid)
                     window.range_play.invoke()
@@ -287,8 +303,36 @@ def main():
                 window.range_play.invoke()
                 assert window.audio_player.current.intervals == [(12, 14)]
                 completed_pcm(device.return_value)
+                window.word.set('医師')
+                window.search_button.invoke()
+                window.hits.selection_set('0')
+                root.update()
+                wait_for(lambda: wave_view.duration == .18 and wave_view.overview is not None)
+                x = round(wave_view.x_at(.07))
+                anchor = wave_view.time_at(x)
+                for _ in range(16):
+                    wheel_at(x, 1)
+                start, end = zoomed = wave_view.view
+                assert abs(end - start - .02) < 1e-6 and abs(wave_view.time_at(x) - anchor) < 3e-6
+                assert wave_view.spans == [(0., .18)] and wave_view.canvas.find_withtag('wave')
+                low = wave_mouse('<ButtonPress-1>', anchor - .004)
+                wave_mouse('<B1-Motion>', anchor + .004)
+                wheel_at(x, -1)
+                assert wave_view.view == zoomed
+                high = wave_mouse('<ButtonRelease-1>', anchor + .004)
+                wave_mouse('<ButtonPress-1>', low)
+                low = wave_mouse('<ButtonRelease-1>', low + .001)
+                assert window.audio_ranges[window.range_key] == (low, high)
+                select_speed('1倍')
+                position = click_wave(anchor)
+                assert completed_pcm(device.return_value) == short_pcm[round(position * 48000)*4:round(high * 48000)*4]
+                wheel_at(x, -1, shift=True)
+                assert wave_view.view[0] > start and wave_view.spans == [(low, high)]
+                window.word.set('京都')
+                window.search_button.invoke()
             window.hits.selection_set('0')
             root.update()
+            assert wave_view.view == (0., 2.)
             window.jump.invoke()
             root.update()
             assert window.heading.get() == '以前の会議'
@@ -329,7 +373,7 @@ def main():
             assert not errors, errors
         finally:
             root.destroy()
-    print('Saved waveform click-to-play and seek, range drags, separated clips and variable-speed repeat: OK')
+    print('Saved waveform zoom, pan, click-to-seek, precise range drags and variable-speed repeat: OK')
 
 
 if __name__ == '__main__':

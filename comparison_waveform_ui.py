@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from comparison_audio import comparison_audio_source
 from comparison_audio_range import audio_duration
-from comparison_waveform import WaveformLoader
+from comparison_waveform import RATE, WaveformLoader
 from engine import timestamp
 from ui_theme import palette
 
@@ -18,6 +18,7 @@ class RangeWaveform(ttk.Frame):
         self.apply_range, self.seek, self.drag_note = apply_range, seek, drag_note
         self.compact = compact
         self.minimum = .001 if compact else .1
+        self.overview = None
         self.origin = 0.
         self._poll_after = None
         self.previous_grab = None
@@ -37,7 +38,7 @@ class RangeWaveform(ttk.Frame):
         self.canvas.pack(fill="x",pady=(2,0))
         if not compact:
             self.scrollbar=ttk.Scrollbar(self,orient="horizontal",command=self.scroll);self.scrollbar.pack(fill="x")
-            self.canvas.bind("<MouseWheel>",self.wheel)
+        self.canvas.bind("<MouseWheel>",self.wheel)
         self.canvas.bind("<Configure>",lambda e:self.draw())
         self.canvas.bind("<ButtonPress-1>",self.press);self.canvas.bind("<B1-Motion>",self.motion)
         self.canvas.bind("<ButtonRelease-1>",self.release);self.canvas.bind("<Escape>",lambda e:self.cancel_drag())
@@ -58,7 +59,7 @@ class RangeWaveform(ttk.Frame):
             self.cancel_drag(restore=False)
             self.pause()
             self.key, self.source, self.origin, self.duration = key, source, origin, duration
-            self.data = self.playhead = None
+            self.data = self.overview = self.playhead = None
             self.spans = list(spans)
             self.note.set(self.empty_note if key is None else "波形用の音声が見つかりません。")
             self.paused=False
@@ -70,7 +71,7 @@ class RangeWaveform(ttk.Frame):
             changed=True
         elif self.drag is None and self.spans!=list(spans):
             self.spans=list(spans);changed=True
-            if spans and (spans[0][0]<self.view[0] or spans[-1][1]>self.view[1]):self.fit()
+            if not self.compact and spans and (spans[0][0]<self.view[0] or spans[-1][1]>self.view[1]):self.fit()
         if not self.enabled or self.winfo_toplevel().state()=="withdrawn":self.pause()
         elif self.paused:
             self.paused=False
@@ -82,12 +83,27 @@ class RangeWaveform(ttk.Frame):
         a,b=self.spans[0][0],self.spans[-1][1];width=max(6.,(b-a)*1.5)
         self.set_view((a+b-width)/2,(a+b+width)/2)
 
+    def bounded_width(self, width):
+        return min(self.duration, max(.02 if self.compact else .5, width))
+
     def set_view(self,start,end):
         if not self.duration or self.drag is not None:return
-        width=min(self.duration,max(min(.5,self.duration),end-start))
-        start=max(0.,min(start,self.duration-width));new=(round(start,6),round(start+width,6))
+        width = self.bounded_width(end-start)
+        start = max(0., min(start, self.duration-width))
+        if width == self.duration:
+            new = (0., self.duration)
+        else:
+            new = (round(start, 6), min(self.duration, round(start+width, 6)))
         if new!=self.view or self.data is None:
-            self.view=new;self.data=None;self.schedule_load();self.draw()
+            self.view = new
+            # Draw existing peaks immediately, even while loading a finer envelope.
+            if not (self.compact and self.data and self.data["start"] <= new[0] and new[1] <= self.data["end"]):
+                self.data = self.overview
+            if self.data and (self.data["step"] <= 1 / RATE or width == self.duration and self.data is self.overview):
+                self.cancel_load()
+            else:
+                self.schedule_load()
+            self.draw()
 
     def schedule_load(self):
         self.cancel_load()
@@ -125,9 +141,13 @@ class RangeWaveform(ttk.Frame):
             if generation!=self.generation:continue
             if state=="ready":
                 self.data = dict(data, start=data["start"] - self.origin, end=data["end"] - self.origin)
-                if not self.compact:
+                if self.compact and self.view == (0., self.duration):
+                    self.overview = self.data
+                elif not self.compact:
                     self.note.set("波形：クリックで再生・移動 / ドラッグで範囲調整 / ホイールで拡大")
-            elif state=="error":self.data=None;self.note.set("波形を表示できません。時刻入力でも調整できます。")
+            elif state=="error":
+                self.data = self.overview
+                self.note.set("波形を表示できません。時刻入力でも調整できます。")
             self.draw()
             if state in ("ready", "error"):
                 self.generation = None
@@ -153,13 +173,17 @@ class RangeWaveform(ttk.Frame):
                 canvas.create_rectangle(max(left,self.x_at(a)),top,min(right,self.x_at(b)),bottom,fill=c["tint"],outline="",tags="selection")
         canvas.create_line(left,mid,right,mid,fill=c["line"])
         if self.data:
-            data=self.data;low,high=data["low"],data["high"];stride=max(1,math.ceil(len(low)/max(1,right-left)))
+            data=self.data;low,high=data["low"],data["high"]
+            first = max(0, math.floor((self.view[0] - data["start"]) / data["step"]))
+            last = min(len(low), math.ceil((self.view[1] - data["start"]) / data["step"]))
+            stride = max(1, math.ceil((last - first) / max(1, right-left)))
             peak=max(1,max(high,default=0),-min(low,default=0));upper=[];lower=[]
-            for index in range(0,len(low),stride):
-                x=self.x_at(data["start"]+(index+min(stride,len(low)-index)/2)*data["step"])
+            for index in range(first, last, stride):
+                stop = min(index + stride, last)
+                x=self.x_at(data["start"]+(index+stop)/2*data["step"])
                 if x<left or x>right:continue
-                upper.extend((x,mid-max(high[index:index+stride])/peak*(bottom-top)/2))
-                lower.append((x,mid-min(low[index:index+stride])/peak*(bottom-top)/2))
+                upper.extend((x,mid-max(high[index:stop])/peak*(bottom-top)/2))
+                lower.append((x,mid-min(low[index:stop])/peak*(bottom-top)/2))
             points=upper+[v for pair in reversed(lower) for v in pair]
             if len(points)>=6:canvas.create_polygon(*points,fill=c["accent"] if self.enabled else c["muted"],outline="",tags="wave")
         if self.spans:
@@ -175,7 +199,7 @@ class RangeWaveform(ttk.Frame):
             t=self.view[0]+(self.view[1]-self.view[0])*i/2
             label = f"{t:.3f}秒" if self.compact else timestamp(t)
             if self.compact and i == 1:
-                label = "離して反映 / Escで取消" if self.drag else "クリックで再生・移動 / ドラッグで範囲調整"
+                label = "離して反映 / Escで取消" if self.drag else "ホイールで拡大・縮小 / クリックで再生・移動 / ドラッグで範囲調整"
             canvas.create_text(self.x_at(t),height-8,text=label,anchor=("w","center","e")[i],fill=c["muted"],font=("Yu Gothic UI",8))
         canvas.create_line(0,top,0,bottom,fill=c["diff_whisper_ink"],width=2,tags="playhead",state="hidden")
         self.set_playhead(self.playhead)
@@ -193,8 +217,8 @@ class RangeWaveform(ttk.Frame):
 
     def handle_at(self,x):
         if not self.spans:return None
-        positions=[self.x_at(self.spans[0][0]),self.x_at(self.spans[-1][1])]
-        distances=[abs(x-v) for v in positions]
+        times = (self.spans[0][0], self.spans[-1][1])
+        distances = [abs(x-self.x_at(t)) if self.view[0] <= t <= self.view[1] else math.inf for t in times]
         index=0 if distances[0]<=distances[1] else 1
         return ("start","end")[index] if distances[index]<=10 else None
 
@@ -270,7 +294,9 @@ class RangeWaveform(ttk.Frame):
         if event.state&1:
             shift=width*.2*(-1 if event.delta>0 else 1);self.set_view(a+shift,b+shift)
         else:
-            anchor=self.time_at(event.x);ratio=(anchor-a)/width;new_width=width*(.75 if event.delta>0 else 1/.75)
+            anchor=self.time_at(event.x);ratio=(anchor-a)/width
+            new_width = self.bounded_width(width * (.75 if event.delta > 0 else 1/.75))
+            if math.isclose(width, new_width, abs_tol=1e-6):return "break"
             self.set_view(anchor-ratio*new_width,anchor+(1-ratio)*new_width)
         return "break"
 
