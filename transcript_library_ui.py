@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 from engine import RESULTS, timestamp
 from comparison_audio import ComparisonAudioPlayer, REPEAT_PAUSE_MS, SPEED_LABELS
 from comparison_audio_range import audio_duration, checked_audio_range
+from comparison_waveform_ui import RangeWaveform
 from result_media import result_file
 from noun_search import load_synsets, noun_key
 from transcript_library import index_nouns, load_records, record_playback_target, search_nouns
@@ -176,6 +177,10 @@ class TranscriptLibrary(tk.Toplevel):
         self.range_play.pack(side='left', padx=4)
         self.range_reset = ttk.Button(bounds, text='全体に戻す', width=9, command=self.reset_range, state='disabled')
         self.range_reset.pack(side='left')
+        self.waveform = RangeWaveform(related, self.range_start, self.range_end, self.apply_waveform_range, compact=True)
+        self.waveform.pack(side='bottom', fill='x', pady=(3, 0))
+        self.range_start.trace_add('write', self.preview_range_fields)
+        self.range_end.trace_add('write', self.preview_range_fields)
         self.hits = record_table(related, [('日付', 80), ('記録名', 97), ('時刻・話者', 108),
                                           ('一致した語', 140), ('発言', 170)], 5)
         self.hits.bind('<<TreeviewSelect>>', self.show_selection)
@@ -196,6 +201,7 @@ class TranscriptLibrary(tk.Toplevel):
 
     def destroy(self):
         self.stop.set()
+        self.waveform.close()
         self.stop_audio()
         if self.timer is not None:
             self.after_cancel(self.timer)
@@ -386,28 +392,59 @@ class TranscriptLibrary(tk.Toplevel):
         if selection:
             hit = self.matches[int(selection[0])]
             self.show_selection()
-            if self.range_duration is not None:
-                values = self.range_start.get(), self.range_end.get()
-                if values == ('0.000', f'{self.range_duration:.3f}'):
-                    self.audio_ranges.pop(self.range_key, None)
-                else:
-                    try:
-                        span = checked_audio_range(*values, self.range_duration, minimum=0)
-                    except ValueError as exc:
-                        self.note.set(f'再生範囲：{exc}')
-                        return 'break'
-                    self.audio_ranges[self.range_key] = span
-            self.play_hit(hit, SPEED_LABELS[self.audio_speed.get()])
+            if self.commit_range_fields():
+                self.play_hit(hit, SPEED_LABELS[self.audio_speed.get()])
         return 'break'
 
-    def show_range(self, hit):
-        key = (hit.record, hit.row) if hit else None
-        if key == self.range_key and (key is None or self.range_duration is not None):
+    def commit_range_fields(self):
+        if self.range_duration is None:
+            return True
+        values = self.range_start.get(), self.range_end.get()
+        if values == ('0.000', f'{self.range_duration:.3f}'):
+            self.audio_ranges.pop(self.range_key, None)
+        else:
+            try:
+                span = checked_audio_range(*values, self.range_duration, minimum=0)
+            except ValueError as exc:
+                self.note.set(f'再生範囲：{exc}')
+                return False
+            self.audio_ranges[self.range_key] = span
+        return True
+
+    def preview_range_fields(self, *_):
+        wave = self.waveform
+        if wave.drag is not None or self.range_duration is None or wave.key != self.range_key:
             return
+        try:
+            span = checked_audio_range(self.range_start.get(), self.range_end.get(), self.range_duration, minimum=0)
+        except ValueError:
+            return
+        if wave.spans != [span]:
+            wave.spans = [span]
+            wave.draw()
+
+    def apply_waveform_range(self):
+        selection = self.hits.selection()
+        if not selection:
+            return False
+        hit = self.matches[int(selection[0])]
+        if (hit.record, hit.row) != self.range_key or not self.commit_range_fields():
+            return False
+        playing = self.playing_hit
+        if playing and (playing.record, playing.row) == self.range_key:
+            self.play_hit(hit, self.playing_speed)
+        return True
+
+    def show_range(self, hit, target=None):
+        key = (hit.record, hit.row) if hit else None
+        if target is None and key == self.range_key and (key is None or self.range_duration is not None):
+            return
+        self.waveform.cancel_drag(restore=False)
         self.range_key, self.range_duration = key, None
+        source, start = None, 0.
         if hit:
             try:
-                _, (start, end) = record_playback_target(RESULTS, self.records[hit.record], hit.row)
+                source, (start, end) = target or record_playback_target(RESULTS, self.records[hit.record], hit.row)
                 self.range_duration = audio_duration(end - start)
             except (OSError, ValueError, TypeError, OverflowError):
                 pass  # Clicking the hit reports the playback error.
@@ -417,6 +454,8 @@ class TranscriptLibrary(tk.Toplevel):
         self.range_play.configure(state=state)
         self.range_reset.configure(state=state)
         span = self.audio_ranges.get(key, (0, self.range_duration))
+        self.waveform.sync_clip(key, [span] if self.range_duration else [], self.range_duration,
+                                self.range_duration is not None, source, start)
         for variable, seconds in zip((self.range_start, self.range_end), span):
             variable.set(f'{seconds:.3f}' if self.range_duration is not None else '')
 
@@ -451,6 +490,9 @@ class TranscriptLibrary(tk.Toplevel):
             if getattr(self.app, 'data_transfer_active', False):
                 raise RuntimeError('更新・復元が終わってから再生してください。')
             source, interval = record_playback_target(RESULTS, self.records[hit.record], hit.row)
+            if (hit.record, hit.row) == self.range_key and (source, interval[0], interval[1] - interval[0]) != (
+                    self.waveform.source, self.waveform.origin, self.range_duration):
+                self.show_range(hit, (source, interval))
             offsets = self.audio_ranges.get((hit.record, hit.row))
             if offsets is not None:
                 start, end = interval
@@ -479,6 +521,7 @@ class TranscriptLibrary(tk.Toplevel):
             self.audio_player.stop()
         self.audio_generation = None
         self.playing_hit = None
+        self.waveform.set_playhead(None)
         self.audio_stop.configure(state='disabled')
         self.audio_status.set(message)
 
@@ -494,6 +537,8 @@ class TranscriptLibrary(tk.Toplevel):
                 continue
             if state == 'playing':
                 self.audio_status.set(f'発言の音声を再生中… {self.playing_speed:g}倍速')
+                if (self.playing_hit.record, self.playing_hit.row) == self.range_key:
+                    self.waveform.set_playhead(value - self.waveform.origin)
             elif state == 'error':
                 self.stop_audio(f'再生できません：{value}')
             elif state == 'ended' and self.audio_repeat.get():

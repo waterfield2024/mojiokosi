@@ -77,6 +77,14 @@ def main():
                 window.audio_speed.set(label)
                 window.audio_speed.event_generate('<<ComboboxSelected>>')
 
+            wave_view = window.waveform
+
+            def wave_mouse(event, seconds):
+                x = round(wave_view.x_at(seconds))
+                wave_view.canvas.event_generate(event, x=x, y=wave_view.canvas.winfo_height()//2)
+                root.update()
+                return round(wave_view.time_at(x), 3)
+
             def wait_for(predicate):
                 deadline = time.monotonic() + 10
                 while not predicate() and time.monotonic() < deadline and not errors:
@@ -103,8 +111,27 @@ def main():
                 assert window.audio_generation is not None, window.audio_status.get()
                 assert completed_pcm(device.return_value) == expected
                 assert (window.range_start.get(), window.range_end.get()) == ('0.000', '2.000')
+                wait_for(lambda: wave_view.data is not None)
+                assert wave_view.source == recording and wave_view.origin == 12 and wave_view.data['start'] == 0
+                assert max(wave_view.data['high']) > 800 and wave_view.canvas.find_withtag('wave')
+                wave_mouse('<ButtonPress-1>', 0)
+                low = wave_mouse('<B1-Motion>', .4)
+                assert float(window.range_start.get()) == low and not window.audio_ranges, (
+                    low, window.range_start.get(), window.audio_ranges, wave_view.drag, errors)
+                wave_mouse('<ButtonRelease-1>', .4)
+                wave_mouse('<ButtonPress-1>', 2)
+                high = wave_mouse('<ButtonRelease-1>', 1.6)
+                assert window.audio_ranges[window.range_key] == (low, high)
+                assert window.grab_current() == window and window.playing_hit is None
+                wave_mouse('<ButtonPress-1>', 1.2)
+                wave_mouse('<B1-Motion>', .8)
+                wave_view.canvas.focus_force()
+                wave_view.canvas.event_generate('<Escape>')
+                assert wave_view.spans == [(low, high)] and window.grab_current() == window
+                assert (float(window.range_start.get()), float(window.range_end.get())) == (low, high)
                 window.range_start.set('0.5')
                 window.range_end.set('1.25')
+                assert wave_view.spans == [(.5, 1.25)]
                 window.update_matches(keep_selection=True)
                 window.range_play.invoke()
                 assert window.audio_player.current.intervals == [(12.5, 13.25)]
@@ -141,20 +168,26 @@ def main():
                 wait_for(lambda: window.repeat_timer is not None and window.audio_player.current is not next_hit)
                 assert window.audio_player.current.intervals == [(.5, 2.5)] and window.audio_player.current.speed == .75
                 assert window.audio_player.current.source.resolve() == separated.resolve()
+                wait_for(lambda: wave_view.data is not None and window.repeat_timer is not None)
+                assert wave_view.source.resolve() == separated.resolve() and wave_view.origin == .5
+                assert wave_view.data['start'] == 0 and max(wave_view.data['high']) > 800
                 pending = window.repeat_timer
-                window.range_start.set('0.25')
-                window.range_end.set('1')
-                window.range_play.invoke()
+                high = wave_mouse('<ButtonPress-1>', 1.)
+                low = wave_mouse('<B1-Motion>', .25)
+                assert window.repeat_timer == pending
+                wave_mouse('<ButtonRelease-1>', .25)
                 assert pending not in root.tk.call('after', 'info')
-                assert window.audio_player.current.intervals == [(.75, 1.5)] and window.audio_player.current.speed == .75
+                assert window.audio_player.current.intervals == [(.5+low, .5+high)] and window.audio_player.current.speed == .75
                 wait_for(lambda: window.repeat_timer is not None)
                 window.range_reset.invoke()
+                assert wave_view.spans == [(0, 2)]
                 assert window.audio_player.current.intervals == [(.5, 2.5)]
                 wait_for(lambda: window.repeat_timer is not None)
                 pending = window.repeat_timer
                 window.repeat_check.invoke()
                 assert pending not in root.tk.call('after', 'info') and window.playing_hit is None
                 window.repeat_check.invoke()
+                window.hits.focus_force()
                 window.hits.event_generate('<space>')
                 wait_for(lambda: window.repeat_timer is not None)
                 pending = window.repeat_timer
@@ -214,6 +247,7 @@ def main():
             click_result()
             root.update()
             assert '音声が見つかりません' in window.audio_status.get()
+            assert wave_view.data is None and not wave_view.enabled
             window.jump.invoke()
             root.update()
             assert window.body.get('match.first', 'match.last') == '医者に相談しました。'
@@ -238,7 +272,7 @@ def main():
             assert not errors, errors
         finally:
             root.destroy()
-    print('Saved records, trimmed PCM, variable-speed repeat, range validation and reset, navigation and edit: OK')
+    print('Saved waveforms, handle and reverse drags, cancel, separated clips and variable-speed repeat: OK')
 
 
 if __name__ == '__main__':
