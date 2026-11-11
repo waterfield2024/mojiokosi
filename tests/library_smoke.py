@@ -20,18 +20,25 @@ def main():
         from engine import RESULTS, save_result
         from transcript_library_ui import TranscriptLibrary
 
-        def save(name, title, lines):
+        def save(name, title, lines, **last_segment):
             rows = [dict(start=12*i, end=12*i+2, speaker='speaker_0', text=text) for i, text in enumerate(lines)]
+            rows[-1].update(last_segment)
             save_result(dict(title=title, segments=rows, speakers={'speaker_0': '佐藤'}), RESULTS / name)
 
-        save('20261010_091000_a', '以前の会議', ['医者に相談しました。', '京都で開催します。', '京都に戻ります。'])
+        save('20261010_091000_a', '以前の会議', ['医者に相談しました。', '京都で開催します。', '京都に戻ります。'],
+             separated_audio='.audio/separated/voice.wav', separated_offset=23.5)
         save('リアルタイム_20261020_143000_b', '今回の会議', ['京都を訪問します。'])
         recording = RESULTS / '20261010_091000_a/.audio/recording.wav'
         recording.parent.mkdir()
-        expected = b'\x84\x03' * (48000 * 2 * 2)
+        expected = b''.join(level.to_bytes(2, 'little') * 48000 for level in (400, 900, 700, 1100))
         with wave.open(str(recording), 'wb') as wav:
             wav.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
             wav.writeframes(bytes(12 * 48000 * 4) + expected + bytes(12 * 48000 * 4))
+        separated = recording.parent / 'separated/voice.wav'
+        separated.parent.mkdir()
+        with wave.open(str(separated), 'wb') as wav:
+            wav.setparams((2, 2, 48000, 0, 'NONE', 'not compressed'))
+            wav.writeframes(bytes(48000 * 2) + expected)
         root = tk.Tk()
         errors = []
         root.report_callback_exception = lambda *args: errors.append(str(args))
@@ -95,13 +102,25 @@ def main():
                 click_result()
                 assert window.audio_generation is not None, window.audio_status.get()
                 assert completed_pcm(device.return_value) == expected
+                assert (window.range_start.get(), window.range_end.get()) == ('0.000', '2.000')
+                window.range_start.set('0.5')
+                window.range_end.set('1.25')
+                window.update_matches(keep_selection=True)
+                window.range_play.invoke()
+                assert window.audio_player.current.intervals == [(12.5, 13.25)]
+                assert completed_pcm(device.return_value) == expected[96000:240000]
+                for invalid in ('0.4', '5', 'invalid'):
+                    window.range_end.set(invalid)
+                    window.range_play.invoke()
+                    assert '再生範囲' in window.note.get() and window.audio_generation is None
+                window.range_end.set('1.25')
                 select_speed('0.5倍')
                 assert window.audio_generation is None
                 window.hits.focus_force()
                 window.hits.event_generate('<space>')
                 slow_pcm = completed_pcm(device.return_value)
-                # atempo can round the last frame. Two seconds of speech should take about four.
-                assert 3.9 < len(slow_pcm) / (48000 * 4) < 4.1
+                # atempo can round the last frame. This 0.75 s selection should take about 1.5 s.
+                assert 1.4 < len(slow_pcm) / (48000 * 4) < 1.6
 
                 passes_before = device.call_count
                 window.repeat_check.invoke()
@@ -113,14 +132,25 @@ def main():
                 assert pcm == slow_pcm * 2
                 select_speed('0.75倍')
                 changed = window.audio_player.current
-                assert changed.intervals == [(12, 14)] and changed.speed == .75
+                assert changed.intervals == [(12.5, 13.25)] and changed.speed == .75
                 wait_for(lambda: window.repeat_timer is not None)
                 pending = window.repeat_timer
                 click_result('1')
                 assert pending not in root.tk.call('after', 'info')
                 next_hit = window.audio_player.current
                 wait_for(lambda: window.repeat_timer is not None and window.audio_player.current is not next_hit)
-                assert window.audio_player.current.intervals == [(24, 26)] and window.audio_player.current.speed == .75
+                assert window.audio_player.current.intervals == [(.5, 2.5)] and window.audio_player.current.speed == .75
+                assert window.audio_player.current.source.resolve() == separated.resolve()
+                pending = window.repeat_timer
+                window.range_start.set('0.25')
+                window.range_end.set('1')
+                window.range_play.invoke()
+                assert pending not in root.tk.call('after', 'info')
+                assert window.audio_player.current.intervals == [(.75, 1.5)] and window.audio_player.current.speed == .75
+                wait_for(lambda: window.repeat_timer is not None)
+                window.range_reset.invoke()
+                assert window.audio_player.current.intervals == [(.5, 2.5)]
+                wait_for(lambda: window.repeat_timer is not None)
                 pending = window.repeat_timer
                 window.repeat_check.invoke()
                 assert pending not in root.tk.call('after', 'info') and window.playing_hit is None
@@ -143,7 +173,7 @@ def main():
                 window.hits.selection_set('1')
                 select_speed('0.75倍')
                 restarted = window.audio_player.current
-                assert restarted.generation != first and restarted.intervals == [(12, 14)] and restarted.speed == .75
+                assert restarted.generation != first and restarted.intervals == [(12.5, 13.25)] and restarted.speed == .75
                 window.repeat_check.invoke()
                 assert not window.audio_repeat.get() and window.audio_generation == restarted.generation
                 select_speed('0.75倍')
@@ -151,7 +181,7 @@ def main():
                 click_result('1')
                 second = window.audio_player.current
                 assert second.generation == window.audio_generation and second.generation != restarted.generation
-                assert second.intervals == [(24, 26)] and second.speed == .75
+                assert second.intervals == [(.5, 2.5)] and second.speed == .75
                 window.audio_player.events.put((restarted.generation, 'error', 'stale event'))
                 window.poll_audio()
                 assert window.audio_generation == second.generation
@@ -160,6 +190,13 @@ def main():
                 assert second.done.wait(3) and window.audio_generation is None
                 window.poll_audio()
                 assert 'stale event' not in window.audio_status.get()
+                window.hits.selection_set('0')
+                root.update()
+                assert (window.range_start.get(), window.range_end.get()) == ('0.500', '1.250')
+                window.range_reset.invoke()
+                window.range_play.invoke()
+                assert window.audio_player.current.intervals == [(12, 14)]
+                completed_pcm(device.return_value)
             window.hits.selection_set('0')
             root.update()
             window.jump.invoke()
@@ -201,7 +238,7 @@ def main():
             assert not errors, errors
         finally:
             root.destroy()
-    print('Saved records, variable-speed repeat PCM, target switching, stop, navigation and edit: OK')
+    print('Saved records, trimmed PCM, variable-speed repeat, range validation and reset, navigation and edit: OK')
 
 
 if __name__ == '__main__':

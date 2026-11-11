@@ -7,6 +7,7 @@ from tkinter import messagebox, ttk
 
 from engine import RESULTS, timestamp
 from comparison_audio import ComparisonAudioPlayer, REPEAT_PAUSE_MS, SPEED_LABELS
+from comparison_audio_range import audio_duration, checked_audio_range
 from result_media import result_file
 from noun_search import load_synsets, noun_key
 from transcript_library import index_nouns, load_records, record_playback_target, search_nouns
@@ -82,6 +83,8 @@ class TranscriptLibrary(tk.Toplevel):
         self.playing_speed = 1.0
         self.repeat_timer = None
         self.audio_repeat = tk.BooleanVar(self, value=False)
+        self.audio_ranges = {}
+        self.range_key = self.range_duration = None
 
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill='both', expand=True)
@@ -156,6 +159,23 @@ class TranscriptLibrary(tk.Toplevel):
         self.jump.pack(side='right')
         self.audio_stop = ttk.Button(actions, text='音声を停止', command=self.stop_audio, state='disabled')
         self.audio_stop.pack(side='right', padx=4)
+        bounds = ttk.Frame(related)
+        bounds.pack(side='bottom', fill='x', pady=(4, 0))
+        ttk.Label(bounds, text='発言内（秒）').pack(side='left')
+        self.range_start = tk.StringVar(self)
+        self.range_end = tk.StringVar(self)
+        self.range_entries = []
+        for label, value in (('開始', self.range_start), ('終了', self.range_end)):
+            ttk.Label(bounds, text=label).pack(side='left', padx=(4, 2))
+            entry = ttk.Spinbox(bounds, textvariable=value, width=6, from_=0, to=0, increment=.1,
+                                format='%.3f', state='disabled')
+            entry.pack(side='left')
+            entry.bind('<Return>', self.play_selected_hit)
+            self.range_entries.append(entry)
+        self.range_play = ttk.Button(bounds, text='範囲を再生', width=9, command=self.play_selected_hit, state='disabled')
+        self.range_play.pack(side='left', padx=4)
+        self.range_reset = ttk.Button(bounds, text='全体に戻す', width=9, command=self.reset_range, state='disabled')
+        self.range_reset.pack(side='left')
         self.hits = record_table(related, [('日付', 80), ('記録名', 97), ('時刻・話者', 108),
                                           ('一致した語', 140), ('発言', 170)], 5)
         self.hits.bind('<<TreeviewSelect>>', self.show_selection)
@@ -311,19 +331,14 @@ class TranscriptLibrary(tk.Toplevel):
         self.matches = search_nouns(self.records, self.indexes, self.selected, self.key,
                                     include_near=self.include_near.get(), synsets=self.synsets) if self.key else []
         self.offset = min(self.offset, max(0, (len(self.matches) - 1) // self.PAGE_SIZE * self.PAGE_SIZE))
-        self.draw_hits()
-        if old is not None:
-            for n, hit in enumerate(self.matches[self.offset:self.offset + self.PAGE_SIZE], self.offset):
-                if (hit.record, hit.row) == (old.record, old.row):
-                    self.hits.selection_set(str(n))
-                    break
+        self.draw_hits(old)
 
     def page(self, step):
         self.stop_audio()
         self.offset += step * self.PAGE_SIZE
         self.draw_hits()
 
-    def draw_hits(self):
+    def draw_hits(self, selected_hit=None):
         self.hits.delete(*self.hits.get_children())
         end = min(self.offset + self.PAGE_SIZE, len(self.matches))
         for n in range(self.offset, end):
@@ -332,6 +347,8 @@ class TranscriptLibrary(tk.Toplevel):
             line = record.lines[hit.row]
             self.hits.insert('', 'end', iid=str(n), values=(record.date.strftime('%Y/%m/%d'), record.title,
                              timestamp(line.start) + ' ' + line.speaker, self.hit_label(hit), line.text))
+            if selected_hit and (hit.record, hit.row) == (selected_hit.record, selected_hit.row):
+                self.hits.selection_set(str(n))
         self.jump.configure(state='disabled')
         self.prev.configure(state='normal' if self.offset else 'disabled')
         self.next.configure(state='normal' if end < len(self.matches) else 'disabled')
@@ -344,9 +361,10 @@ class TranscriptLibrary(tk.Toplevel):
 
     def show_selection(self, event=None):
         selection = self.hits.selection()
+        hit = self.matches[int(selection[0])] if selection else None
+        self.show_range(hit)
         self.jump.configure(state='normal' if selection else 'disabled')
         if selection:
-            hit = self.matches[int(selection[0])]
             self.note.set(f'「{self.query_text}」の検索結果　{self.hit_label(hit)}')
         elif self.matches:
             end = min(self.offset + self.PAGE_SIZE, len(self.matches))
@@ -366,8 +384,52 @@ class TranscriptLibrary(tk.Toplevel):
     def play_selected_hit(self, event=None):
         selection = self.hits.selection()
         if selection:
-            self.play_hit(self.matches[int(selection[0])], SPEED_LABELS[self.audio_speed.get()])
+            hit = self.matches[int(selection[0])]
+            self.show_selection()
+            if self.range_duration is not None:
+                values = self.range_start.get(), self.range_end.get()
+                if values == ('0.000', f'{self.range_duration:.3f}'):
+                    self.audio_ranges.pop(self.range_key, None)
+                else:
+                    try:
+                        span = checked_audio_range(*values, self.range_duration, minimum=0)
+                    except ValueError as exc:
+                        self.note.set(f'再生範囲：{exc}')
+                        return 'break'
+                    self.audio_ranges[self.range_key] = span
+            self.play_hit(hit, SPEED_LABELS[self.audio_speed.get()])
         return 'break'
+
+    def show_range(self, hit):
+        key = (hit.record, hit.row) if hit else None
+        if key == self.range_key and (key is None or self.range_duration is not None):
+            return
+        self.range_key, self.range_duration = key, None
+        if hit:
+            try:
+                _, (start, end) = record_playback_target(RESULTS, self.records[hit.record], hit.row)
+                self.range_duration = audio_duration(end - start)
+            except (OSError, ValueError, TypeError, OverflowError):
+                pass  # Clicking the hit reports the playback error.
+        state = 'normal' if self.range_duration is not None else 'disabled'
+        for entry in self.range_entries:
+            entry.configure(state=state, to=self.range_duration or 0)
+        self.range_play.configure(state=state)
+        self.range_reset.configure(state=state)
+        span = self.audio_ranges.get(key, (0, self.range_duration))
+        for variable, seconds in zip((self.range_start, self.range_end), span):
+            variable.set(f'{seconds:.3f}' if self.range_duration is not None else '')
+
+    def reset_range(self):
+        self.show_selection()
+        if self.range_duration is None:
+            return
+        self.audio_ranges.pop(self.range_key, None)
+        self.range_start.set('0.000')
+        self.range_end.set(f'{self.range_duration:.3f}')
+        hit = self.playing_hit
+        if hit and (hit.record, hit.row) == self.range_key:
+            self.play_hit(hit, self.playing_speed)
 
     def change_audio_speed(self, event=None):
         self.poll_audio()
@@ -389,6 +451,11 @@ class TranscriptLibrary(tk.Toplevel):
             if getattr(self.app, 'data_transfer_active', False):
                 raise RuntimeError('更新・復元が終わってから再生してください。')
             source, interval = record_playback_target(RESULTS, self.records[hit.record], hit.row)
+            offsets = self.audio_ranges.get((hit.record, hit.row))
+            if offsets is not None:
+                start, end = interval
+                low, high = checked_audio_range(*offsets, end - start, minimum=0)
+                interval = start + low, min(end, start + high)
             if self.app.history_window:
                 self.app.history_window.stop_audio()
             if self.app.comparison_window:

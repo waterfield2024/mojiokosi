@@ -29,15 +29,18 @@ def audio_duration(value):
     except (TypeError,ValueError,OverflowError):return None
 
 
-def checked_audio_range(start,end,duration=None):
-    start,end=parse_audio_time(start),parse_audio_time(end)
-    if end<=start:raise ValueError("終了は開始より後にしてください。")
-    duration=audio_duration(duration)
+def checked_audio_range(start, end, duration=None, *, minimum=.1):
+    start, end = parse_audio_time(start), parse_audio_time(end)
+    duration = audio_duration(duration)
     if duration is not None:
-        if end>round(duration,3):raise ValueError(f"終了は {timestamp(duration)} 以内にしてください。")
-        end=min(end,duration)
-    if end-start<.1-1e-6:raise ValueError("0.1秒以上の範囲を指定してください。")
-    return start,end
+        if end > round(duration, 3):
+            raise ValueError(f"終了は {timestamp(duration)} 以内にしてください。")
+        end = min(end, duration)
+    if end <= start:
+        raise ValueError("終了は開始より後にしてください。")
+    if end - start < minimum - 1e-6:
+        raise ValueError(f"{minimum:g}秒以上の範囲を指定してください。")
+    return start, end
 
 
 class ComparisonRangeControls:
