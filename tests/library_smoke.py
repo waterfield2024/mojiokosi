@@ -59,6 +59,11 @@ def main():
             return window
 
         try:
+            root.update()
+            saved, appearance = app.open_button, app.appearance_combo
+            assert saved.winfo_ismapped() and saved.master is appearance.master, (root.state(), root.geometry(), saved.winfo_geometry())
+            assert saved.winfo_rootx() == appearance.winfo_rootx() and saved.winfo_width() == appearance.winfo_width()
+            assert saved.winfo_rooty() >= appearance.winfo_rooty() + appearance.winfo_height()
             window = open_records()
             assert [r.title for r in window.records] == ['今回の会議', '以前の会議']
             assert not window.waveform.winfo_ismapped()
