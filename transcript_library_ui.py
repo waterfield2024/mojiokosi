@@ -67,6 +67,7 @@ class TranscriptLibrary(tk.Toplevel):
         self.counts = Counter()
         self.shared = set()
         self.error = None
+        self.research_window = None
         self.selected = self.key = None
         self.query_text = ''
         self.synsets = {}
@@ -93,6 +94,8 @@ class TranscriptLibrary(tk.Toplevel):
         header = ttk.Frame(outer)
         header.pack(fill='x', pady=(0, 8))
         ttk.Label(header, text='保存した記録', font=('Yu Gothic UI', 15, 'bold')).pack(side='left')
+        self.research_btn = ttk.Button(header, text='過去の発言・記事を調べる…', command=self.open_research, state='disabled')
+        self.research_btn.pack(side='left', padx=10)
         ttk.Button(header, text='ファイルから開く…', command=self.open_file).pack(side='right')
         self.edit = ttk.Button(header, text='メイン画面で編集', command=self.edit_record, state='disabled')
         self.edit.pack(side='right', padx=6)
@@ -221,6 +224,7 @@ class TranscriptLibrary(tk.Toplevel):
                 break
             if kind == 'records':
                 self.records, self.skipped = payload
+                self.research_btn.configure(state='normal')
                 first = 0
                 for i, record in enumerate(self.records):
                     self.listing.insert('', 'end', iid=str(i), values=(record.date.strftime('%Y/%m/%d %H:%M'), record.title))
@@ -241,6 +245,7 @@ class TranscriptLibrary(tk.Toplevel):
             elif kind == 'error':
                 self.done = True
                 self.error = payload
+                self.research_btn.configure(state='normal')
                 changed = True
             elif kind == 'done':
                 self.done = True
@@ -585,12 +590,26 @@ class TranscriptLibrary(tk.Toplevel):
             hit = self.matches[int(selected[0])]
             origin = self.selected, self.query_text, self.offset, self.include_near.get()
             self.choose_record(hit.record)
-            self.origin, self.focus_row = origin, hit.row
+            self.origin = origin
             self.back.pack(side='left', padx=4)
-            pos = f'{3 * hit.row + 2}.0'
-            self.body.tag_remove('match', '1.0', 'end')
-            self.body.tag_add('match', pos, pos + ' lineend')
-            self.body.see(pos)
+            self.highlight_row(hit.row)
+
+    def highlight_row(self, row):
+        self.focus_row = row
+        pos = f'{3 * row + 2}.0'
+        self.body.tag_remove('match', '1.0', 'end')
+        self.body.tag_add('match', pos, pos + ' lineend')
+        self.body.see(pos)
+
+    def open_research(self):
+        from research_ui import ResearchWindow
+        self.stop_audio()
+        if self.research_window is None:
+            self.research_window = ResearchWindow(self)
+        else:
+            self.research_window.deiconify()
+            self.research_window.lift()
+            self.research_window.grab_set()
 
     def go_back(self):
         i, query, offset, include_near = self.origin

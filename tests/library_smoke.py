@@ -369,11 +369,63 @@ def main():
             window = open_records()
             assert '大阪' in window.word.cget('values') and '京都' not in window.word.cget('values')
             assert '大阪で開催します。' in window.body.get('1.0', 'end')
+
+            from research_ui import ResearchWindow
+            from tkinter import ttk
+
+            window.research_btn.invoke()
+            research = next(w for w in window.winfo_children() if isinstance(w, ResearchWindow))
+            wait_for(lambda: research.ready)
+            def button(parent, label):
+                for widget in parent.winfo_children():
+                    if isinstance(widget, ttk.Button) and widget.cget('text') == label:
+                        return widget
+                    found = button(widget, label)
+                    if found:
+                        return found
+            button(research, '記事を追加…').invoke()
+            dialog = next(w for w in research.winfo_children() if isinstance(w, tk.Toplevel))
+            form = dialog.winfo_children()[0]
+            form.grid_slaves(row=0, column=1)[0].insert(0, '開催地のお知らせ')
+            form.grid_slaves(row=1, column=1)[0].insert(0, '2025-03-01')
+            textfile = Path(temp) / 'お知らせ.md'
+            textfile.write_text('会場を決めました。\n京都で開催します。', 'utf-8')
+            with patch('tkinter.filedialog.askopenfilename', return_value=str(textfile)):
+                button(dialog, 'ファイルから本文を入力…').invoke()
+            button(dialog, '記事を保存').invoke()
+            wait_for(lambda: research.ready and len(research.sources) == 3)
+            research.question.insert(0, '昔、京都について何と言っていた？')
+            research.order.set('古い順')
+            research.search_btn.invoke()
+            wait_for(lambda: len(research.hits) == 3)
+            assert research.table.set('0', '種類') == '記事' and research.table.set('0', '日付') == '2025-03-01'
+            research.open_btn.invoke()
+            assert '会場を決めました。' in research.detail.get('1.0', 'end')
+            with patch('research_ui.summarize', return_value='会議での発言です。 [2]'):
+                research.ai_btn.invoke()
+                wait_for(lambda: research.ai_job is None and bool(research.detail.tag_ranges('ref_1')))
+            ref = research.detail.tag_ranges('ref_1')[0]
+            research.detail.see(ref)
+            root.update()
+            x, y, width, height = research.detail.bbox(ref)
+            for event in ('<Motion>', '<ButtonPress-1>', '<ButtonRelease-1>'):
+                research.detail.event_generate(event, x=x+width//2, y=y+height//2)
+            root.update()
+            assert research.table.selection() == ('1',), (research.table.selection(), research.detail.tag_ranges('ref_1'),
+                                                          research.detail_title.get(), errors)
+            research.open_btn.invoke()
+            root.update()
+            assert window.grab_current() == window and window.heading.get() == '以前の会議'
+            assert window.body.get('match.first', 'match.last') == '京都で開催します。'
+            window.research_btn.invoke()
+            root.update()
+            assert window.grab_current() == research and research.table.selection() == ('1',)
+            research.destroy()
             window.destroy()
             assert not errors, errors
         finally:
             root.destroy()
-    print('Saved waveform zoom, pan, click-to-seek, precise range drags and variable-speed repeat: OK')
+    print('Saved record playback, article import, cited research and source navigation: OK')
 
 
 if __name__ == '__main__':

@@ -29,7 +29,7 @@ class BackupDialog(tk.Toplevel):
         ttk.Label(frame, text='設定・話者の名前と学習音声・誤変換辞書・覚えた修正を\n1つのZIPファイルにまとめます。',
                   justify='left').pack(anchor='w', pady=(10, 12))
         self.include_results = tk.BooleanVar(value=False)
-        self.results_check = ttk.Checkbutton(frame, text='録音・録画・文字起こし結果も含める', variable=self.include_results)
+        self.results_check = ttk.Checkbutton(frame, text='録音・録画・文字起こし結果・記事も含める', variable=self.include_results)
         self.results_check.pack(anchor='w', pady=(0, 10))
         self.backup_button = ttk.Button(frame, text='バックアップを保存…', style='Accent.TButton', command=self.backup)
         self.backup_button.pack(fill='x', pady=(0, 15))
@@ -123,7 +123,7 @@ class BackupDialog(tk.Toplevel):
         summary = result['summary']
         try: created = datetime.fromisoformat(result['created']).astimezone().strftime('%Y/%m/%d %H:%M')
         except ValueError: created = '不明'
-        included = f"録音・録画・文字起こし結果も復元します（結果 {summary['results']} 件）。" if result['include_results'] else '現在の録音・録画・文字起こし結果はそのまま残します。'
+        included = f"録音・録画・文字起こし結果・記事も復元します（文字起こし {summary['results']} 件）。" if result['include_results'] else '現在の録音・録画・文字起こし結果・記事はそのまま残します。'
         text = (f"展開後のサイズ：{result['expanded_bytes'] / 1024**2:,.1f} MiB\n作成日時：{created}\n話者 {summary['speakers']} 人 ／ 学習音声 {summary['learning_clips']} 件 ／ 辞書 {summary['dictionary_rules']} 件\n\n"
                 '現在の設定・話者・学習音声・辞書・覚えた修正を、バックアップ時点の内容に置き換えます。\n'
                 + included + '\n復元前のデータは自動で保管します。\n\n復元して再起動しますか？')
