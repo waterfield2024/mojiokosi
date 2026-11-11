@@ -443,7 +443,9 @@ def main():
             wait_for(lambda: research.ready)
             assert research.winfo_viewable() and root.grab_current() == research
             assert not any(isinstance(w, TranscriptLibrary) for w in root.winfo_children())
-            research.hybrid.set(False)
+            wait_for(lambda: len(research.hits) == 3)
+            assert research.current_request() == ('昔、京都について何と言っていた？', 'すべて', '古い順', False)
+            research.question.delete(0, 'end')
             research.question.insert(0, '京都')
             research.order.set('古い順')
             research.search_btn.invoke()
@@ -466,13 +468,15 @@ def main():
             direct.invoke()
             research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
             wait_for(lambda: research.ready)
-            assert research.hybrid.get()
-            assert research.reason.get() == 'すべて'
+            assert research.current_request() == ('京都', 'すべて', '古い順', False)
+            assert research.reason.current() == 0
             def filter_reason(value):
                 research.reason.current(REASON_FILTERS.index(value))
                 research.reason.event_generate('<<ComboboxSelected>>')
                 root.update()
 
+            research.hybrid.set(True)
+            research.question.delete(0, 'end')
             research.question.insert(0, '値上げを見送った理由は？')
             research.search_btn.invoke()
             filter_reason('意味が近い')
@@ -532,6 +536,7 @@ def main():
             wait_for(lambda: research.ready)
             research.hybrid.set(False)
             research.kind.set('記事')
+            research.question.delete(0, 'end')
             research.question.insert(0, '2040年の天体観測')
             research.search_btn.invoke()
             wait_for(lambda: len(research.hits) == 100)
@@ -621,7 +626,13 @@ def main():
             direct.invoke()
             research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
             wait_for(lambda: research.ready)
+            wait_for(lambda: research.page_number.get() == '2' and len(research.hits) == 1)
+            assert research.current_request() == ('2040年の天体観測', '発言', '新しい順', False)
+            assert research.reason.get() == 'キーワード一致（101件）'
+            research.question.delete(0, 'end')
             research.question.insert(0, '2041年 値上げを見送った理由は？')
+            research.kind.set('記事')
+            research.hybrid.set(True)
             from research_vectors import load_encoder
             resume_vectors = threading.Event()
 
@@ -658,7 +669,34 @@ def main():
                     assert research.table.set('0', '番号') == f'[{(page-1)*100+1}]'
                     if reason != 'すべて':
                         assert research.table.set('0', '一致理由') == reason
+            filter_reason('両方')
+            research.question.insert('end', '入力途中')
             research.destroy()
+
+            # Close even before semantic matches return, then reopen from Saved Records.
+            resume_vectors.clear()
+            with patch('research_ui.load_encoder', side_effect=delayed_load):
+                try:
+                    direct.invoke()
+                    research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
+                    wait_for(lambda: research.provisional)
+                    assert research.reason.get() == '両方（0件）' and not research.hits
+                    research.destroy()
+                    window = TranscriptLibrary(app)
+                    wait_for(lambda: window.research_btn.instate(['!disabled']))
+                    window.research_btn.invoke()
+                    research = window.research_window
+                    wait_for(lambda: research.provisional)
+                finally:
+                    resume_vectors.set()
+            wait_for(lambda: research.pages and research.pages['両方'].total == 101, timeout=240)
+            assert research.current_request() == ('2041年 値上げを見送った理由は？', '記事', '新しい順', True)
+            assert research.reason.get() == '両方（101件）' and research.page_number.get() == '2'
+            for reason, page in [('すべて', 4), ('キーワード一致', 3), ('意味が近い', 2), ('両方', 2)]:
+                filter_reason(reason)
+                assert research.table.set('0', '番号') == f'[{(page - 1) * 100 + 1}]'
+            research.destroy()
+            window.destroy()
             assert not errors, errors
         finally:
             root.destroy()

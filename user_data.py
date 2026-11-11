@@ -11,7 +11,7 @@ import time
 import uuid
 
 FILES = ('appearance_settings.json', 'caption_settings.json', 'compute_settings.json',
-         'context_settings.json', 'recording_settings.json', 'window_settings.json',
+         'context_settings.json', 'recording_settings.json', 'research_settings.json', 'window_settings.json',
          'corrections.json', 'correction_memory.json', 'speaker_memory.json')
 DIRECTORIES = ('speaker_memory_clips', 'speaker_sources', 'transcripts')
 MARKER = '.user-data-v1.json'

@@ -1,6 +1,6 @@
 """Local full-text and semantic retrieval over cited utterances and article passages."""
 import calendar
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from functools import lru_cache
 import hashlib
@@ -14,6 +14,7 @@ from noun_search import load_synsets, spelling_variant, synonyms
 from research_vectors import DIMENSION, VECTOR_VERSION
 from result_media import result_file
 from transcript_library import plain_directory
+from user_data import data_path
 
 
 ARTICLE_LIMIT = 2 * 1024 * 1024
@@ -21,6 +22,42 @@ KINDS = ('すべて', '発言', '記事')
 ORDERS = ('関連度順', '古い順', '新しい順')
 REASON_FILTERS = ('すべて', 'キーワード一致', '意味が近い', '両方')
 PAGE_SIZE = 100
+QUESTION_LIMIT = 500
+
+
+@dataclass(frozen=True)
+class ResearchSession:
+    question: str = ''
+    kind: str = KINDS[0]
+    order: str = ORDERS[0]
+    hybrid: bool = True
+    reason: str = REASON_FILTERS[0]
+    pages: dict[str, int] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls):
+        try:
+            data = json.loads(data_path('research_settings.json').read_text(encoding='utf-8-sig'))
+        except (OSError, ValueError, RecursionError):
+            return cls()
+        if not isinstance(data, dict):
+            return cls()
+        question = data.get('question')
+        question = question.strip() if isinstance(question, str) and len(question) <= QUESTION_LIMIT else ''
+        pages = data.get('pages')
+        return cls(
+            question=question,
+            kind=data['kind'] if data.get('kind') in KINDS else KINDS[0],
+            order=data['order'] if data.get('order') in ORDERS else ORDERS[0],
+            hybrid=data['hybrid'] if type(data.get('hybrid')) is bool else True,
+            reason=data['reason'] if data.get('reason') in REASON_FILTERS else REASON_FILTERS[0],
+            pages={reason: n for reason, n in pages.items()
+                   if reason in REASON_FILTERS and type(n) is int and n >= 1}
+                  if question and isinstance(pages, dict) else {},
+        )
+
+    def save(self):
+        write_json(data_path('research_settings.json'), asdict(self))
 
 
 class SemanticSearchError(Exception):
@@ -319,7 +356,7 @@ class ResearchIndex:
 
     def search_pages_with_counts(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100, encoder=None):
         """Use limit=None to retain ordered passage references for browsing all pages."""
-        if len(question) > 500:
+        if len(question) > QUESTION_LIMIT:
             raise ValueError('質問は500文字以内で入力してください。')
         topic, periods = question_dates(unicodedata.normalize('NFKC', question), today or date.today())
         keywords = list(dict.fromkeys(w for w in terms(topic, self.tokenizer) if w not in STOP))

@@ -10,8 +10,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from engine import RESULTS, timestamp
-from research_library import (KINDS, ORDERS, PAGE_SIZE, REASON_FILTERS, ResearchIndex, SemanticSearchError, collect_sources,
-                              import_text, save_article, summarize)
+from research_library import (KINDS, ORDERS, PAGE_SIZE, QUESTION_LIMIT, REASON_FILTERS, ResearchIndex,
+                              ResearchSession, SemanticSearchError, collect_sources, import_text, save_article, summarize)
 from research_vectors import load_encoder
 from transcript_library import load_records
 from ui_theme import palette, style_text
@@ -98,7 +98,9 @@ def index_worker(root, snapshot, requests, events, stop):
                             vectors_ready = False
                             vector_error(exc)
                             result = index.search_pages_with_counts(question, kind, order, limit=None)
-                        events.put(('hits', number, result))
+                        # Full-text results can arrive before the semantic matches change every filter's count.
+                        provisional = bool(hybrid and question and sources and not vectors_ready)
+                        events.put(('lexical_hits' if provisional else 'hits', number, result))
                 except InterruptedError:
                     return
                 except (sqlite3.Error, OSError, ValueError) as exc:
@@ -177,7 +179,8 @@ class ResearchWindow(tk.Toplevel):
         self.minsize(630, 440)
         self.sources, self.hits = {}, []
         self.pages = {}
-        self.offset_by_reason = {}
+        session = ResearchSession.load()
+        self.offset_by_reason = {reason: (n - 1) * PAGE_SIZE for reason, n in session.pages.items()}
         self.offset = 0
         self.requests, self.events = queue.Queue(), queue.Queue()
         self.stop = threading.Event()
@@ -186,7 +189,7 @@ class ResearchWindow(tk.Toplevel):
         self.last_question = ''
         self.ready = False
         self.refresh_number = 0
-        self.last_request = None
+        self.last_request = (session.question, session.kind, session.order, session.hybrid) if session.question else None
         frame = ttk.Frame(self, padding=12)
         frame.pack(fill='both', expand=True)
         top = ttk.Frame(frame)
@@ -197,19 +200,20 @@ class ResearchWindow(tk.Toplevel):
         bar = ttk.Frame(frame)
         bar.pack(fill='x')
         self.question = ttk.Entry(bar)
+        self.question.insert(0, session.question)
         self.question.pack(side='left', fill='x', expand=True)
         self.question.bind('<Return>', self.search)
         self.kind = ttk.Combobox(bar, values=KINDS, width=5, state='readonly')
         self.order = ttk.Combobox(bar, values=ORDERS, width=8, state='readonly')
-        for box in (self.kind, self.order):
-            box.current(0)
+        for box, value in ((self.kind, session.kind), (self.order, session.order)):
+            box.set(value)
             box.pack(side='left', padx=(5, 0))
             box.bind('<<ComboboxSelected>>', self.search)
         self.search_btn = ttk.Button(bar, text='調べる', command=self.search, state='disabled')
         self.search_btn.pack(side='left', padx=(5, 0))
         options = ttk.Frame(frame)
         options.pack(fill='x', pady=(5, 0))
-        self.hybrid = tk.BooleanVar(self, value=True)
+        self.hybrid = tk.BooleanVar(self, value=session.hybrid)
         ttk.Checkbutton(options, text='意味の近い表現も探す', variable=self.hybrid,
                         command=lambda: self.search() if self.question.get().strip() else None).pack(side='left')
         self.vector_status = tk.StringVar(self, value='初回の検索で意味検索モデルを準備します。')
@@ -219,7 +223,7 @@ class ResearchWindow(tk.Toplevel):
         result_bar.pack(fill='x', pady=6)
         ttk.Label(result_bar, text='一致理由').pack(side='left')
         self.reason = ttk.Combobox(result_bar, values=REASON_FILTERS, width=26, state='readonly')
-        self.reason.current(0)
+        self.reason.current(REASON_FILTERS.index(session.reason))
         self.reason.pack(side='left', padx=(4, 10))
         self.reason.bind('<<ComboboxSelected>>', self.filter_results)
         ttk.Label(result_bar, textvariable=self.status, wraplength=470).pack(side='left')
@@ -280,6 +284,13 @@ class ResearchWindow(tk.Toplevel):
         self.timer = self.after(40, self.poll)
 
     def destroy(self):
+        if not getattr(self.app, '_restart_after_restore', False):
+            request = self.last_request or ('', self.kind.get(), self.order.get(), self.hybrid.get())
+            pages = {reason: offset // PAGE_SIZE + 1 for reason, offset in self.offset_by_reason.items()}
+            try:
+                ResearchSession(*request, REASON_FILTERS[self.reason.current()], pages).save()
+            except (OSError, ValueError) as exc:
+                self.app.status.set(f'調べる画面の検索条件を保存できませんでした。({exc})')
         self.stop.set()
         self.requests.put(('close', 0, ()))
         self.after_cancel(self.timer)
@@ -291,11 +302,11 @@ class ResearchWindow(tk.Toplevel):
 
     def refresh(self, saved=None):
         self.number += 1
-        self.offset_by_reason.clear()
-        self.offset = 0
+        if saved is not None:
+            self.offset_by_reason.clear()
+            self.offset = 0
         self.set_pages({})
         self.refresh_number = self.number
-        self.last_request = None
         self.ready = False
         self.search_btn.configure(state='disabled')
         self.saved_key = saved
@@ -303,16 +314,23 @@ class ResearchWindow(tk.Toplevel):
         self.status.set('記事を保存しました。検索に反映中…' if saved else '発言と記事の検索索引を準備中…')
         self.requests.put(('refresh', self.number, ()))
 
+    def current_request(self):
+        return (self.question.get().strip(), self.kind.get(), self.order.get(), self.hybrid.get())
+
     def search(self, event=None, *, keep_page=False):
         if not self.ready:
+            return
+        request = self.current_request()
+        if len(request[0]) > QUESTION_LIMIT:
+            self.status.set(f'質問は{QUESTION_LIMIT}文字以内で入力してください。')
             return
         self.number += 1
         if not keep_page:
             self.offset_by_reason.clear()
             self.offset = 0
         self.set_pages({})
-        self.last_question = self.question.get().strip()
-        self.last_request = (self.last_question, self.kind.get(), self.order.get(), self.hybrid.get())
+        self.last_request = request
+        self.last_question = request[0]
         self.display([])
         self.status.set('検索中…')
         self.requests.put(('search', self.number, self.last_request))
@@ -326,7 +344,7 @@ class ResearchWindow(tk.Toplevel):
             if op in ('vector_status', 'vectors_ready'):
                 if number == self.refresh_number:
                     self.vector_status.set(value)
-                    current = (self.question.get().strip(), self.kind.get(), self.order.get(), self.hybrid.get())
+                    current = self.current_request()
                     if (op == 'vectors_ready' and self.hybrid.get() and current == self.last_request
                             and self.state() != 'withdrawn' and self.ai_job is None):
                         self.search(keep_page=True)
@@ -345,12 +363,12 @@ class ResearchWindow(tk.Toplevel):
                                 + (f'　読み込めない記録 {self.snapshot[1]} 件' if self.snapshot[1] else '')
                                 + (f'　読み込めない記事 {skipped} 件' if skipped else ''))
                 if self.question.get().strip():
-                    self.search()
+                    self.search(keep_page=self.current_request() == self.last_request)
                 elif self.saved_key in self.sources:
                     self.display([(self.saved_key, 0, '')])
                 self.saved_key = None
-            elif op == 'hits':
-                self.set_pages(value)
+            elif op in ('hits', 'lexical_hits'):
+                self.set_pages(value, provisional=op == 'lexical_hits')
                 self.filter_results()
             elif op == 'summary':
                 self.show_summary(value)
@@ -358,9 +376,10 @@ class ResearchWindow(tk.Toplevel):
                 self.status.set(value)
         self.timer = self.after(250 if self.state() == 'withdrawn' else 80, self.poll)
 
-    def set_pages(self, pages):
+    def set_pages(self, pages, *, provisional=False):
         selected = self.reason.current()
         self.pages = pages
+        self.provisional = provisional
         labels = [f'{reason}（{pages[reason].total:,}件）' for reason in REASON_FILTERS] if pages else REASON_FILTERS
         self.reason.configure(values=labels)
         self.reason.current(selected)
@@ -412,7 +431,7 @@ class ResearchWindow(tk.Toplevel):
         if offset is None:
             offset = self.offset_by_reason.get(reason, 0)
         self.offset = min(offset, last_offset)
-        self.offset_by_reason[reason] = self.offset
+        self.offset_by_reason[reason] = offset if self.provisional else self.offset
         self.page_number.set(str(self.offset // PAGE_SIZE + 1))
         self.page_range.set(f'／ 全{last_page:,}ページ')
         hits = page.hits[self.offset:self.offset + PAGE_SIZE]

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import numpy as np
 from janome.tokenizer import Tokenizer
-from research_library import (Passage, ResearchIndex, Source, collect_sources, import_text, question_dates,
+from research_library import (Passage, ResearchIndex, ResearchSession, Source, collect_sources, import_text, question_dates,
                               save_article, summarize)
 from transcript_library import load_records
 from research_vectors import DIMENSION
@@ -21,6 +21,23 @@ class ResearchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tokenizer = Tokenizer()
+
+    def test_portable_research_session_and_invalid_preferences(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict('os.environ', {'WHISPER_USER_DATA_DIR': temp}):
+            path = Path(temp) / 'research_settings.json'
+            self.assertEqual(ResearchSession.load(), ResearchSession())
+            saved = ResearchSession('過去の会議', '記事', '古い順', False, 'キーワード一致',
+                                    {'キーワード一致': 3, 'すべて': 2})
+            saved.save()
+            self.assertEqual(ResearchSession.load(), saved)
+            data = json.loads(path.read_text('utf-8'))
+            data.update(order=[], hybrid='off', reason='両方（7件）',
+                        pages={'すべて': 2, 'キーワード一致': 0, '両方': True, '余分': 3})
+            path.write_text(json.dumps(data), 'utf-8')
+            self.assertEqual(ResearchSession.load(), ResearchSession('過去の会議', '記事', pages={'すべて': 2}))
+            for invalid in (b'[]', b'{', b'\xff'):
+                path.write_bytes(invalid)
+                self.assertEqual(ResearchSession.load(), ResearchSession())
 
     def test_search_across_years_types_and_speakers(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -280,14 +297,14 @@ class ResearchTests(unittest.TestCase):
                 wait_for('ready')
                 query = ('予算', '記事', '関連度順', True)
                 requests.put(('search', 2, query))
-                pages = wait_for('hits')
+                pages = wait_for('lexical_hits')
                 self.assertEqual(pages['キーワード一致'].hits, [(key, 0, 'キーワード一致')])
                 self.assertEqual(pages['キーワード一致'].total, 1)
                 self.assertEqual(pages['両方'].total, 0)
                 release.set()
                 self.assertIn('全文検索を使えます', wait_for('vector_status'))
                 requests.put(('search', 3, query))
-                self.assertEqual(wait_for('hits')['すべて'].hits, [(key, 0, 'キーワード一致')])
+                self.assertEqual(wait_for('lexical_hits')['すべて'].hits, [(key, 0, 'キーワード一致')])
             finally:
                 stop.set()
                 release.set()
