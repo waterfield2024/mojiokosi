@@ -10,8 +10,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from engine import RESULTS, timestamp
-from research_library import (KINDS, ORDERS, ResearchIndex, SemanticSearchError, collect_sources, import_text,
-                              save_article, summarize)
+from research_library import (KINDS, ORDERS, REASON_FILTERS, ResearchIndex, SemanticSearchError, collect_sources,
+                              import_text, save_article, summarize)
 from research_vectors import load_encoder
 from transcript_library import load_records
 from ui_theme import palette, style_text
@@ -93,11 +93,11 @@ def index_worker(root, snapshot, requests, events, stop):
                             threading.Thread(target=prepare_model, daemon=True).start()
                         active = encoder if hybrid and vectors_ready else None
                         try:
-                            result = index.search_with_reasons(question, kind, order, encoder=active)
+                            result = index.search_pages(question, kind, order, encoder=active)
                         except SemanticSearchError as exc:
                             vectors_ready = False
                             vector_error(exc)
-                            result = index.search_with_reasons(question, kind, order)
+                            result = index.search_pages(question, kind, order)
                         events.put(('hits', number, result))
                 except InterruptedError:
                     return
@@ -176,6 +176,7 @@ class ResearchWindow(tk.Toplevel):
         self.geometry('960x630')
         self.minsize(630, 440)
         self.sources, self.hits = {}, []
+        self.pages = {}
         self.requests, self.events = queue.Queue(), queue.Queue()
         self.stop = threading.Event()
         self.number = 0
@@ -212,7 +213,14 @@ class ResearchWindow(tk.Toplevel):
         self.vector_status = tk.StringVar(self, value='初回の検索で意味検索モデルを準備します。')
         ttk.Label(options, textvariable=self.vector_status, wraplength=520).pack(side='left', padx=8)
         self.status = tk.StringVar(self)
-        ttk.Label(frame, textvariable=self.status, wraplength=860).pack(anchor='w', pady=6)
+        result_bar = ttk.Frame(frame)
+        result_bar.pack(fill='x', pady=6)
+        ttk.Label(result_bar, text='一致理由').pack(side='left')
+        self.reason = ttk.Combobox(result_bar, values=REASON_FILTERS, width=14, state='readonly')
+        self.reason.current(0)
+        self.reason.pack(side='left', padx=(4, 10))
+        self.reason.bind('<<ComboboxSelected>>', self.filter_results)
+        ttk.Label(result_bar, textvariable=self.status, wraplength=470).pack(side='left')
         panes = ttk.Panedwindow(frame, orient='vertical')
         panes.pack(fill='both', expand=True)
         upper = ttk.Frame(panes)
@@ -265,6 +273,7 @@ class ResearchWindow(tk.Toplevel):
 
     def refresh(self, saved=None):
         self.number += 1
+        self.pages.clear()
         self.refresh_number = self.number
         self.last_request = None
         self.ready = False
@@ -278,6 +287,7 @@ class ResearchWindow(tk.Toplevel):
         if not self.ready:
             return
         self.number += 1
+        self.pages.clear()
         self.last_question = self.question.get().strip()
         self.last_request = (self.last_question, self.kind.get(), self.order.get(), self.hybrid.get())
         self.display([])
@@ -317,16 +327,32 @@ class ResearchWindow(tk.Toplevel):
                     self.display([(self.saved_key, 0, '')])
                 self.saved_key = None
             elif op == 'hits':
-                hits, partial, more = value
-                self.display(hits)
-                self.status.set(('全文検索は一部の検索語で照合　' if partial else '') +
-                                (f'{len(hits)} 件を表示' + ('（さらに候補があります）' if more else '') if hits
-                                 else '該当する資料は見つかりませんでした。話題や年代を変えて検索できます。'))
+                self.pages = value
+                self.filter_results()
             elif op == 'summary':
                 self.show_summary(value)
             elif op in ('progress', 'error', 'unavailable'):
                 self.status.set(value)
         self.timer = self.after(250 if self.state() == 'withdrawn' else 80, self.poll)
+
+    def filter_results(self, event=None):
+        if not self.pages:
+            return
+        if event is not None:
+            # AI citation numbers belong to the previously displayed rows.
+            self.number += 1
+        reason = self.reason.get()
+        hits, partial, more = self.pages[reason]
+        self.display(hits)
+        if hits:
+            self.status.set(('全文検索は一部の検索語で照合　' if partial else '') +
+                            f'{len(hits)} 件を表示' + ('（さらに候補があります）' if more else ''))
+        elif reason in ('意味が近い', '両方') and not self.hybrid.get():
+            self.status.set('この一致理由で探すには「意味の近い表現も探す」をオンにしてください。')
+        elif self.pages['すべて'][0]:
+            self.status.set(f'「{reason}」は0件です。「すべて」でほかの結果を表示できます。')
+        else:
+            self.status.set('該当する資料は見つかりませんでした。話題や年代を変えて検索できます。')
 
     def set_detail(self, text):
         self.detail.configure(state='normal')

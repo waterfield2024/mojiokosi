@@ -175,6 +175,33 @@ class ResearchTests(unittest.TestCase):
                              ([('a', 0, 'キーワード一致')], True, True))
             self.assertEqual(index.search_with_reasons('2025年', encoder=encoder, limit=1)[0],
                              [('a', 0, '日付一致')])
+            pages = index.search_pages('予算', encoder=encoder, limit=2)
+            self.assertEqual(pages['キーワード一致'], ([('a', i, 'キーワード一致') for i in (0, 1)], False, True))
+            self.assertEqual(pages['意味が近い'], ([('a', 4, '意味が近い')], False, False))
+            self.assertEqual(pages['両方'], ([('a', 3, '両方')], False, False))
+            dates = index.search_pages('2025年', encoder=encoder, limit=1)
+            self.assertTrue(all(page == ([], False, False) for reason, page in dates.items() if reason != 'すべて'))
+
+    def test_reason_filters_reach_past_the_first_hundred_passages(self):
+        lines = [Passage('予算')] * 105 + [Passage('予算を別途検討します。'), Passage('資金を調達します。')]
+        source = Source('a', '記事', '資料', '2025-02-01', '', tuple(lines))
+        with closing(sqlite3.connect(':memory:')) as db:
+            index = ResearchIndex(db, self.tokenizer)
+            index.sync({'a': source})
+            semantic = db.execute('SELECT source,ordinal,?,id FROM parts WHERE ordinal != 105 ORDER BY ordinal',
+                                  (source.day,)).fetchall()
+            with patch.object(index, 'semantic_hits', return_value=semantic) as search:
+                pages = index.search_pages('予算', kind='記事', order='古い順', encoder=object())
+                search.assert_called_once()
+            self.assertEqual(pages['すべて'], ([('a', i, '両方') for i in range(100)], False, True))
+            self.assertEqual(pages['両方'], pages['すべて'])
+            self.assertEqual(pages['キーワード一致'], ([('a', 105, 'キーワード一致')], False, False))
+            self.assertEqual(pages['意味が近い'], ([('a', 106, '意味が近い')], False, False))
+            # A semantic match can also be lexical even beyond the extra FTS rows.
+            with patch.object(index, 'semantic_hits', return_value=semantic[-2:]):
+                pages = index.search_pages('予算', kind='記事', order='古い順', limit=2, encoder=object())
+            self.assertEqual(pages['両方'], ([('a', 104, '両方')], False, False))
+            self.assertEqual(pages['意味が近い'], ([('a', 106, '意味が近い')], False, False))
 
     def test_full_text_available_while_model_loads_and_after_failure(self):
         from research_ui import index_worker
@@ -202,11 +229,13 @@ class ResearchTests(unittest.TestCase):
                 wait_for('ready')
                 query = ('予算', '記事', '関連度順', True)
                 requests.put(('search', 2, query))
-                self.assertEqual(wait_for('hits')[0], [(key, 0, 'キーワード一致')])
+                pages = wait_for('hits')
+                self.assertEqual(pages['キーワード一致'][0], [(key, 0, 'キーワード一致')])
+                self.assertEqual(pages['両方'][0], [])
                 release.set()
                 self.assertIn('全文検索を使えます', wait_for('vector_status'))
                 requests.put(('search', 3, query))
-                self.assertEqual(wait_for('hits')[0], [(key, 0, 'キーワード一致')])
+                self.assertEqual(wait_for('hits')['すべて'][0], [(key, 0, 'キーワード一致')])
             finally:
                 stop.set()
                 release.set()

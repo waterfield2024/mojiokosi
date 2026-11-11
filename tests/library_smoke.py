@@ -466,23 +466,41 @@ def main():
             research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
             wait_for(lambda: research.ready)
             assert research.hybrid.get()
+            assert research.reason.get() == 'すべて'
+            def filter_reason(value):
+                research.reason.set(value)
+                research.reason.event_generate('<<ComboboxSelected>>')
+                root.update()
+
             research.question.insert(0, '値上げを見送った理由は？')
             research.search_btn.invoke()
+            filter_reason('意味が近い')
             wait_for(lambda: '利用できます' in research.vector_status.get() or
                      '準備できません' in research.vector_status.get(), timeout=240)
             assert '全文検索と意味検索' in research.vector_status.get(), research.vector_status.get()
             wait_for(lambda: len(research.hits) == 2)
             assert {research.table.set(str(i), '種類') for i in range(2)} == {'発言', '記事'}
             assert all(research.table.set(i, '一致理由') == '意味が近い' for i in research.table.get_children())
+            with patch.object(research.requests, 'put', side_effect=AssertionError('filter repeated the search')):
+                filter_reason('キーワード一致')
+                assert not research.hits and '0件' in research.status.get()
+                assert research.open_btn.instate(['disabled']) and research.ai_btn.instate(['disabled'])
+                filter_reason('すべて')
+                assert len(research.hits) == 2
+                filter_reason('意味が近い')
             research.kind.set('記事')
             research.search_btn.invoke()
             wait_for(lambda: len(research.hits) == 1)
             research.open_btn.invoke()
             assert '今の価格を維持します' in research.detail.get('1.0', 'end')
+            filter_reason('両方')
+            assert not research.hits
             research.question.delete(0, 'end')
             research.question.insert(0, '家計への負担を考え、当面は今の価格を維持します。')
             research.search_btn.invoke()
             wait_for(lambda: research.hits and research.table.set('0', '一致理由') == '両方')
+            assert research.table.set('0', '番号') == '[1]'
+            filter_reason('意味が近い')
             research.question.delete(0, 'end')
             research.question.insert(0, '値上げを見送った理由は？')
             research.kind.set('発言')
@@ -496,6 +514,8 @@ def main():
             research.kind.set('記事')
             research.hybrid.set(False)
             research.search_btn.invoke()
+            wait_for(lambda: 'オンにしてください' in research.status.get())
+            filter_reason('すべて')
             wait_for(lambda: '該当する資料は' in research.status.get())
             research.destroy()
             window.destroy()

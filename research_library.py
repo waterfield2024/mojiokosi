@@ -19,6 +19,7 @@ from transcript_library import plain_directory
 ARTICLE_LIMIT = 2 * 1024 * 1024
 KINDS = ('すべて', '発言', '記事')
 ORDERS = ('関連度順', '古い順', '新しい順')
+REASON_FILTERS = ('すべて', 'キーワード一致', '意味が近い', '両方')
 
 
 class SemanticSearchError(Exception):
@@ -302,6 +303,9 @@ class ResearchIndex:
         return [(key, row) for key, row, _ in hits], partial, more
 
     def search_with_reasons(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100, encoder=None):
+        return self.search_pages(question, kind, order, today=today, limit=limit, encoder=encoder)['すべて']
+
+    def search_pages(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100, encoder=None):
         if len(question) > 500:
             raise ValueError('質問は500文字以内で入力してください。')
         topic, periods = question_dates(unicodedata.normalize('NFKC', question), today or date.today())
@@ -344,15 +348,18 @@ class ResearchIndex:
         if filters:
             sql += ' WHERE ' + ' AND '.join(filters)
         sql += f" ORDER BY {ranking} (s.day=''), s.day {direction}, s.key, p.ordinal LIMIT ?"
+        page_size = limit + 1  # The extra row indicates more matches for that filter.
+        # At most len(semantic) lexical rows can be excluded by a keyword-only filter.
+        fetch_limit = page_size + len(semantic)
         for joiner in (' AND ', ' OR '):
-            args = params + ([joiner.join(groups)] if groups else []) + [limit + 1]
-            hits = list(self.db.execute(sql, args))
-            if hits or len(groups) <= 1:
+            args = params + ([joiner.join(groups)] if groups else []) + [fetch_limit]
+            lexical = list(self.db.execute(sql, args))
+            if lexical or len(groups) <= 1:
                 break
-        partial = bool(hits) and joiner == ' OR '
-        lexical_ids = {hit[3] for hit in hits}
+        partial = bool(lexical) and joiner == ' OR '
+        lexical_ids = {hit[3] for hit in lexical}
         semantic_ids = {hit[3] for hit in semantic}
-        lexical_truncated = len(hits) > limit
+        hits = lexical[:page_size]
         if semantic:
             # Reciprocal rank fusion keeps BM25 and cosine on their own scales.
             scores = {}
@@ -365,10 +372,9 @@ class ResearchIndex:
                 hits = sorted(scores)  # Stable source and passage order within a day.
                 hits.sort(key=lambda r: r[2], reverse=direction == 'DESC')
                 hits.sort(key=lambda r: not r[2])
-        visible = hits[:limit]
-        if semantic and lexical_truncated:
-            # A displayed semantic hit can also match FTS below its ranking cutoff.
-            missing = [part for _, _, _, part in visible if part not in lexical_ids]
+        if semantic and len(lexical) == fetch_limit:
+            # Semantic candidates can still match FTS beyond the fetched keyword rows.
+            missing = list(semantic_ids - lexical_ids)
             for offset in range(0, len(missing), 300):
                 page = missing[offset:offset+300]
                 slots = ','.join('?' for _ in page)
@@ -376,16 +382,30 @@ class ResearchIndex:
                                           [joiner.join(groups), *page])
                 lexical_ids.update(part for (part,) in matches)
 
-        results = []
-        for key, ordinal, _, part in visible:
+        pages = {reason: [] for reason in REASON_FILTERS}
+        for key, ordinal, _, part in hits:
             if not groups:
                 reason = '日付一致'
             elif part in semantic_ids:
                 reason = '両方' if part in lexical_ids else '意味が近い'
             else:
                 reason = 'キーワード一致'
-            results.append((key, ordinal, reason))
-        return results, partial, len(hits) > limit
+            hit = (key, ordinal, reason)
+            if len(pages['すべて']) < page_size:
+                pages['すべて'].append(hit)
+            if reason in pages and len(pages[reason]) < page_size:
+                pages[reason].append(hit)
+
+        # The original fusion window supplies the same ordering as the unfiltered
+        # search. Continue the FTS order to fill a keyword-only page if necessary.
+        keywords_only = pages['キーワード一致']
+        for key, ordinal, _, part in lexical[page_size:]:
+            if len(keywords_only) >= page_size:
+                break
+            if part not in semantic_ids:
+                keywords_only.append((key, ordinal, 'キーワード一致'))
+        return {reason: (rows[:limit], bool(rows) and partial and reason != '意味が近い', len(rows) > limit)
+                for reason, rows in pages.items()}
 
 
 def summarize(question, evidence):
