@@ -2,15 +2,19 @@ from contextlib import closing
 from datetime import date
 import json
 from pathlib import Path
+import queue
 import sqlite3
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 from janome.tokenizer import Tokenizer
 from research_library import (Passage, ResearchIndex, Source, collect_sources, import_text, question_dates,
                               save_article, summarize)
 from transcript_library import load_records
+from research_vectors import DIMENSION
 
 
 class ResearchTests(unittest.TestCase):
@@ -80,6 +84,51 @@ class ResearchTests(unittest.TestCase):
         self.assertEqual(hits, [('0', 0), ('1', 0), ('2', 0)])
         self.assertFalse(partial)
 
+    def test_hybrid_independent_candidates_filters_and_persistent_updates(self):
+        first = '家計への負担を考え、当面は今の価格を維持します。'
+        second = '当面、料金を据え置く方針です。'
+        literal = '値上げを見送った理由を説明します。'
+
+        class Encoder:
+            def encode(self, texts, *, query=False):
+                result = np.zeros((len(texts), DIMENSION), dtype='<f4')
+                for i, text in enumerate(texts):
+                    result[i, 0 if query or text in (first, second) else 1] = 1
+                return result
+
+        docs = {
+            'a': Source('a', '記事', 'お知らせ', '2024-01-02', '', (Passage('桜が咲いた。'), Passage(first))),
+            'b': Source('b', '発言', '会議', '2025-01-03', '', (Passage(second, '佐藤', 15),)),
+            'c': Source('c', '発言', '会議', '', '', (Passage(literal, '田中', 42),)),
+        }
+        encoder = Encoder()
+        query = '値上げを見送った理由は？'
+        with tempfile.TemporaryDirectory() as temp:
+            filename = Path(temp) / 'cache.db'
+            with closing(sqlite3.connect(filename)) as db:
+                index = ResearchIndex(db, self.tokenizer)
+                index.sync(docs)
+                self.assertEqual(index.search(query)[0], [('c', 0)])
+                self.assertEqual(list(index.vector_batches(docs, encoder, batch_size=1)), [1]*4)
+                self.assertCountEqual(index.search(query, encoder=encoder)[0], [('a', 1), ('b', 0), ('c', 0)])
+                self.assertEqual(index.search(query, kind='記事', encoder=encoder)[0], [('a', 1)])
+                self.assertEqual(index.search('2025年の' + query, encoder=encoder)[0], [('b', 0)])
+                self.assertEqual(index.search(query, order='新しい順', limit=2, encoder=encoder),
+                                 ([('b', 0), ('a', 1)], False, True))
+                with patch.object(encoder, 'encode', side_effect=AssertionError('date-only query encoded')):
+                    self.assertEqual(index.search('2024年', encoder=encoder)[0], [('a', 0), ('a', 1)])
+            with closing(sqlite3.connect(filename)) as db:
+                index = ResearchIndex(db, self.tokenizer)
+                index.sync(docs)
+                self.assertEqual(list(index.vector_batches(docs, encoder)), [])
+                del docs['b']
+                docs['a'] = Source('a', '記事', 'お知らせ', '', '', (Passage('桜が散った。'),))
+                index.sync(docs)
+                self.assertEqual(list(index.vector_batches(docs, encoder)), [1])
+                self.assertEqual(index.search(query, encoder=encoder)[0], [('c', 0)])
+                db.execute("UPDATE passage_vectors SET version='old'")
+                self.assertEqual(list(index.vector_batches(docs, encoder)), [2])
+
     def test_article_import_and_calendar_bounds(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -97,6 +146,44 @@ class ResearchTests(unittest.TestCase):
         today = date(2026, 4, 1)
         self.assertEqual(question_dates('2024年2月', today)[1], [('2024-02-01', '2024-02-29')])
         self.assertEqual(question_dates('一昨年から今年まで', today)[1], [('2024-01-01', '2026-12-31')])
+
+    def test_full_text_available_while_model_loads_and_after_failure(self):
+        from research_ui import index_worker
+        requests, events = queue.Queue(), queue.Queue()
+        stop, release = threading.Event(), threading.Event()
+
+        def offline(stopped):
+            release.wait(10)
+            raise OSError('offline')
+
+        def wait_for(kind):
+            while True:
+                action, _, value = events.get(timeout=10)
+                self.assertNotIn(action, ('error', 'unavailable'), value)
+                if action == kind:
+                    return value
+
+        with tempfile.TemporaryDirectory() as temp, patch('research_ui.load_encoder', side_effect=offline):
+            root = Path(temp) / 'transcripts'
+            key = save_article(root, 'お知らせ', '', '', '予算について相談します。')
+            worker = threading.Thread(target=index_worker, args=(root, ([], 0), requests, events, stop))
+            worker.start()
+            try:
+                requests.put(('refresh', 1, ()))
+                wait_for('ready')
+                query = ('予算', '記事', '関連度順', True)
+                requests.put(('search', 2, query))
+                self.assertEqual(wait_for('hits')[0], [(key, 0)])
+                release.set()
+                self.assertIn('全文検索を使えます', wait_for('vector_status'))
+                requests.put(('search', 3, query))
+                self.assertEqual(wait_for('hits')[0], [(key, 0)])
+            finally:
+                stop.set()
+                release.set()
+                requests.put(('close', 0, ()))
+                worker.join(10)
+                self.assertFalse(worker.is_alive())
 
     def test_ai_only_displays_locally_verifiable_citations(self):
         items = [{'citations': [1], 'answer': '100万円を予定。'},

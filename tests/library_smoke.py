@@ -108,8 +108,8 @@ def main():
                 unit = 1 if root.tk.call('tk', 'windowingsystem') == 'aqua' else 120
                 wave_view.canvas.event_generate('<MouseWheel>', x=x, y=32, delta=direction*unit, state=int(shift))
 
-            def wait_for(predicate):
-                deadline = time.monotonic() + 10
+            def wait_for(predicate, timeout=10):
+                deadline = time.monotonic() + timeout
                 while not predicate() and time.monotonic() < deadline and not errors:
                     root.update()
                     time.sleep(.01)
@@ -397,11 +397,12 @@ def main():
             form.grid_slaves(row=0, column=1)[0].insert(0, '開催地のお知らせ')
             form.grid_slaves(row=1, column=1)[0].insert(0, '2025-03-01')
             textfile = Path(temp) / 'お知らせ.md'
-            textfile.write_text('会場を決めました。\n京都で開催します。', 'utf-8')
+            textfile.write_text('会場を決めました。\n京都で開催します。\n家計への負担を考え、当面は今の価格を維持します。', 'utf-8')
             with patch('tkinter.filedialog.askopenfilename', return_value=str(textfile)):
                 button(dialog, 'ファイルから本文を入力…').invoke()
             button(dialog, '記事を保存').invoke()
             wait_for(lambda: research.ready and len(research.sources) == 3)
+            research.hybrid.set(False)
             research.question.insert(0, '昔、京都について何と言っていた？')
             research.order.set('古い順')
             research.search_btn.invoke()
@@ -440,6 +441,7 @@ def main():
             wait_for(lambda: research.ready)
             assert research.winfo_viewable() and root.grab_current() == research
             assert not any(isinstance(w, TranscriptLibrary) for w in root.winfo_children())
+            research.hybrid.set(False)
             research.question.insert(0, '京都')
             research.order.set('古い順')
             research.search_btn.invoke()
@@ -458,6 +460,37 @@ def main():
             window.destroy()
             root.update()
             assert not research.winfo_exists() and root.grab_current() is None
+            save('20261022_090000_c', '打ち合わせ', ['会議で料金の引き上げを保留にしました。'])
+            direct.invoke()
+            research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
+            wait_for(lambda: research.ready)
+            assert research.hybrid.get()
+            research.question.insert(0, '値上げを見送った理由は？')
+            research.search_btn.invoke()
+            wait_for(lambda: '利用できます' in research.vector_status.get() or
+                     '準備できません' in research.vector_status.get(), timeout=240)
+            assert '全文検索と意味検索' in research.vector_status.get(), research.vector_status.get()
+            wait_for(lambda: len(research.hits) == 2)
+            assert {research.table.set(str(i), '種類') for i in range(2)} == {'発言', '記事'}
+            research.kind.set('記事')
+            research.search_btn.invoke()
+            wait_for(lambda: len(research.hits) == 1)
+            research.open_btn.invoke()
+            assert '今の価格を維持します' in research.detail.get('1.0', 'end')
+            research.kind.set('発言')
+            research.search_btn.invoke()
+            wait_for(lambda: len(research.hits) == 1 and research.table.set('0', '種類') == '発言')
+            research.open_btn.invoke()
+            window = research.library
+            wait_for(lambda: window.focus_row is not None)
+            assert '料金の引き上げを保留' in window.body.get('match.first', 'match.last')
+            window.research_btn.invoke()
+            research.kind.set('記事')
+            research.hybrid.set(False)
+            research.search_btn.invoke()
+            wait_for(lambda: '該当する資料は' in research.status.get())
+            research.destroy()
+            window.destroy()
             assert not errors, errors
         finally:
             root.destroy()

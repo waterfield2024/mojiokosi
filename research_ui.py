@@ -1,5 +1,6 @@
 """Question-driven retrieval with citations to local transcripts and articles."""
 from contextlib import closing
+import gc
 from pathlib import Path
 import queue
 import re
@@ -9,7 +10,9 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from engine import RESULTS, timestamp
-from research_library import KINDS, ORDERS, ResearchIndex, collect_sources, import_text, save_article, summarize
+from research_library import (KINDS, ORDERS, ResearchIndex, SemanticSearchError, collect_sources, import_text,
+                              save_article, summarize)
+from research_vectors import load_encoder
 from transcript_library import load_records
 from ui_theme import palette, style_text
 
@@ -18,6 +21,17 @@ _summary_lock = threading.Lock()
 
 
 def index_worker(root, snapshot, requests, events, stop):
+    def prepare_model():
+        try:
+            model = load_encoder(stop.is_set)
+            try:
+                requests.put(('model', 0, model))
+                stop.wait()
+            finally:
+                model.close()
+        except Exception as exc:
+            requests.put(('model_error', 0, str(exc)))
+
     try:
         from janome.tokenizer import Tokenizer
         if snapshot is None:
@@ -28,18 +42,63 @@ def index_worker(root, snapshot, requests, events, stop):
         cache.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(cache / 'search-v1.sqlite3', timeout=15)) as db:
             index = ResearchIndex(db, Tokenizer())
+            encoder = batches = None
+            started = vectors_ready = False
+            sources = {}
+            generation = processed = 0
+
+            def vector_error(exc):
+                events.put(('vector_status', generation, f'意味検索を準備できません。全文検索を使えます。'
+                            f'　画面を開き直すと再試行します。({exc})'))
+
             while not stop.is_set():
-                action, number, args = requests.get()
+                if batches is None:
+                    action, number, args = requests.get()
+                else:
+                    try:
+                        action, number, args = requests.get_nowait()
+                    except queue.Empty:
+                        try:
+                            processed += next(batches)
+                            events.put(('vector_status', generation, f'意味検索の索引を作成中… {processed} 件処理'))
+                        except StopIteration:
+                            batches = None
+                            vectors_ready = True
+                            events.put(('vectors_ready', generation, '全文検索と意味検索を利用できます。'))
+                        except Exception as exc:
+                            batches = encoder = None
+                            vector_error(exc)
+                        continue
                 if action == 'close':
                     return
                 try:
                     if action == 'refresh':
+                        generation, processed = number, 0
+                        vectors_ready = False
                         sources, skipped = collect_sources(root, snapshot[0])
                         index.sync(sources, stop.is_set,
                                    lambda n, total: events.put(('progress', number, f'検索索引を準備中… {n} / {total} 資料')))
+                        batches = index.vector_batches(sources, encoder, stop.is_set) if encoder else None
                         events.put(('ready', number, (sources, skipped, snapshot)))
-                    else:
-                        events.put(('hits', number, index.search(*args)))
+                    elif action == 'model':
+                        encoder = args
+                        batches = index.vector_batches(sources, encoder, stop.is_set)
+                    elif action == 'model_error':
+                        vector_error(args)
+                    elif action == 'search':
+                        question, kind, order, hybrid = args
+                        if hybrid and question and sources and not started:
+                            started = True
+                            events.put(('vector_status', generation, '意味検索モデルを準備中（初回は約154 MB）。全文検索を使えます。'))
+                            threading.Thread(target=prepare_model, daemon=True).start()
+                        active = encoder if hybrid and vectors_ready else None
+                        try:
+                            result = index.search(question, kind, order, encoder=active)
+                        except SemanticSearchError as exc:
+                            vectors_ready = False
+                            vector_error(exc)
+                            result = index.search(question, kind, order)
+                        events.put(('hits', number, result))
                 except InterruptedError:
                     return
                 except (sqlite3.Error, OSError, ValueError) as exc:
@@ -123,6 +182,8 @@ class ResearchWindow(tk.Toplevel):
         self.saved_key = self.ai_job = None
         self.last_question = ''
         self.ready = False
+        self.refresh_number = 0
+        self.last_request = None
         frame = ttk.Frame(self, padding=12)
         frame.pack(fill='both', expand=True)
         top = ttk.Frame(frame)
@@ -143,6 +204,13 @@ class ResearchWindow(tk.Toplevel):
             box.bind('<<ComboboxSelected>>', self.search)
         self.search_btn = ttk.Button(bar, text='調べる', command=self.search, state='disabled')
         self.search_btn.pack(side='left', padx=(5, 0))
+        options = ttk.Frame(frame)
+        options.pack(fill='x', pady=(5, 0))
+        self.hybrid = tk.BooleanVar(self, value=True)
+        ttk.Checkbutton(options, text='意味の近い表現も探す', variable=self.hybrid,
+                        command=lambda: self.search() if self.question.get().strip() else None).pack(side='left')
+        self.vector_status = tk.StringVar(self, value='初回の検索で意味検索モデルを準備します。')
+        ttk.Label(options, textvariable=self.vector_status, wraplength=520).pack(side='left', padx=8)
         self.status = tk.StringVar(self)
         ttk.Label(frame, textvariable=self.status, wraplength=860).pack(anchor='w', pady=6)
         panes = ttk.Panedwindow(frame, orient='vertical')
@@ -176,6 +244,8 @@ class ResearchWindow(tk.Toplevel):
         self.detail.pack(fill='both', expand=True)
         self.grab_set()
         self.question.focus_set()
+        # Dispose of cycles from previously closed Tk dialogs on their owning thread.
+        gc.collect()
         threading.Thread(target=index_worker, args=(RESULTS, self.snapshot, self.requests, self.events, self.stop),
                          daemon=True).start()
         self.refresh()
@@ -193,6 +263,8 @@ class ResearchWindow(tk.Toplevel):
 
     def refresh(self, saved=None):
         self.number += 1
+        self.refresh_number = self.number
+        self.last_request = None
         self.ready = False
         self.search_btn.configure(state='disabled')
         self.saved_key = saved
@@ -205,9 +277,10 @@ class ResearchWindow(tk.Toplevel):
             return
         self.number += 1
         self.last_question = self.question.get().strip()
+        self.last_request = (self.last_question, self.kind.get(), self.order.get(), self.hybrid.get())
         self.display([])
         self.status.set('検索中…')
-        self.requests.put(('search', self.number, (self.last_question, self.kind.get(), self.order.get())))
+        self.requests.put(('search', self.number, self.last_request))
 
     def poll(self):
         while True:
@@ -215,6 +288,14 @@ class ResearchWindow(tk.Toplevel):
                 op, number, value = self.events.get_nowait()
             except queue.Empty:
                 break
+            if op in ('vector_status', 'vectors_ready'):
+                if number == self.refresh_number:
+                    self.vector_status.set(value)
+                    current = (self.question.get().strip(), self.kind.get(), self.order.get(), self.hybrid.get())
+                    if (op == 'vectors_ready' and self.hybrid.get() and current == self.last_request
+                            and self.state() != 'withdrawn' and self.ai_job is None):
+                        self.search()
+                continue
             if op == 'summary':
                 self.ai_job = None
                 self.enable_ai()
@@ -236,7 +317,7 @@ class ResearchWindow(tk.Toplevel):
             elif op == 'hits':
                 hits, partial, more = value
                 self.display(hits)
-                self.status.set(('一部の検索語に一致　' if partial else '') +
+                self.status.set(('全文検索は一部の検索語で照合　' if partial else '') +
                                 (f'{len(hits)} 件を表示' + ('（さらに候補があります）' if more else '') if hits
                                  else '該当する資料は見つかりませんでした。話題や年代を変えて検索できます。'))
             elif op == 'summary':

@@ -14,6 +14,7 @@ The URL and SHA-256 are pinned from https://www.python.org/ftp/python/index-wind
 | [Japanese WordNet 2.1](https://bond-lab.github.io/wnja/) | © 2009–2011 NICT, 2012–2020 Francis Bond and contributors, 2021–2026 Francis Bond and Takayuki Kuribayashi. Japanese noun synonym groups derived from the [official release](https://github.com/bond-lab/wnja/releases/tag/v2.1). The upstream copyright notices and license accompany the data in `docs/dictionaries/wnja-noun-synsets.txt`. |
 | PyTorch 2.14.1 / TorchAudio 2.11.1 | https://pytorch.org/ — BSD-style; CUDA dependencies have NVIDIA terms |
 | Transformers and Hugging Face libraries | https://github.com/huggingface/transformers — Apache-2.0 and component licenses |
+| [Ruri v3 30m](https://huggingface.co/cl-nagoya/ruri-v3-30m) | Japanese retrieval embeddings by Hayato Tsukagoshi and Ryohei Sasano, Apache-2.0. Downloaded on first semantic search. |
 | Whisper models | https://github.com/openai/whisper — MIT; pinned Hugging Face revisions in `whisper_hf_manifest.json` |
 | Granite Speech 5.0 TurboCTC | https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc — Apache-2.0; revision in `granite_model_manifest.json` |
 | Haas-ja-v1.0 | Third Intelligence: https://huggingface.co/third-intelligence/Haas-ja-v1.0 — Apache-2.0 |

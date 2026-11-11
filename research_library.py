@@ -1,4 +1,4 @@
-"""Local full-text retrieval over cited utterances and saved article passages."""
+"""Local full-text and semantic retrieval over cited utterances and article passages."""
 import calendar
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -11,6 +11,7 @@ import uuid
 
 from context_ai import write_json
 from noun_search import load_synsets, spelling_variant, synonyms
+from research_vectors import DIMENSION, VECTOR_VERSION
 from result_media import result_file
 from transcript_library import plain_directory
 
@@ -18,6 +19,10 @@ from transcript_library import plain_directory
 ARTICLE_LIMIT = 2 * 1024 * 1024
 KINDS = ('すべて', '発言', '記事')
 ORDERS = ('関連度順', '古い順', '新しい順')
+
+
+class SemanticSearchError(Exception):
+    pass
 
 
 @dataclass(frozen=True)
@@ -182,12 +187,18 @@ def question_dates(question, today):
 class ResearchIndex:
     def __init__(self, db, tokenizer):
         self.db, self.tokenizer = db, tokenizer
+        self.signatures = {}
+        self.speakers = set()
+        self.sources = {}
         db.executescript("""
             PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS sources (key TEXT PRIMARY KEY, signature TEXT, kind TEXT, day TEXT);
             CREATE TABLE IF NOT EXISTS parts (id INTEGER PRIMARY KEY, source TEXT REFERENCES sources(key)
                 ON DELETE CASCADE, ordinal INTEGER);
             CREATE INDEX IF NOT EXISTS by_source ON parts(source);
+            CREATE TABLE IF NOT EXISTS passage_vectors (
+                part INTEGER PRIMARY KEY REFERENCES parts(id) ON DELETE CASCADE,
+                version TEXT NOT NULL, embedding BLOB NOT NULL);
             CREATE VIRTUAL TABLE IF NOT EXISTS words USING fts5(body, title, speaker);
             CREATE TRIGGER IF NOT EXISTS remove_words AFTER DELETE ON parts BEGIN
                 DELETE FROM words WHERE rowid=old.id;
@@ -196,6 +207,9 @@ class ResearchIndex:
 
     def sync(self, sources, cancelled=lambda: False, progress=lambda current, total: None):
         previous = dict(self.db.execute('SELECT key,signature FROM sources'))
+        self.signatures = {}
+        self.sources = sources
+        self.speakers = {p.speaker for src in sources.values() for p in src.passages if p.speaker}
 
         @lru_cache(maxsize=256)
         def metadata(text):
@@ -211,6 +225,7 @@ class ResearchIndex:
             for p in src.passages:
                 digest.update(json.dumps((p.text, p.speaker, p.start), ensure_ascii=False).encode('utf-8') + b'\n')
             signature = digest.hexdigest()
+            self.signatures[src.key] = signature
             if previous.get(src.key) == signature:
                 continue
             progress(number, len(sources))
@@ -227,7 +242,62 @@ class ResearchIndex:
                     self.db.execute('INSERT INTO words(rowid,body,title,speaker) VALUES (?,?,?,?)',
                                     (row, ' '.join(terms(p.text, self.tokenizer)), heading, metadata(p.speaker)))
 
-    def search(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100):
+    def vector_batches(self, sources, encoder, stopped=lambda: False, batch_size=12):
+        """Fill missing vectors in short transactions, yielding between inference batches."""
+        after = 0
+        while not stopped():
+            rows = self.db.execute("""
+                SELECT p.id,p.source,p.ordinal,s.signature FROM parts p JOIN sources s ON s.key=p.source
+                LEFT JOIN passage_vectors v ON v.part=p.id AND v.version=?
+                WHERE p.id>? AND v.part IS NULL ORDER BY p.id LIMIT ?
+            """, (VECTOR_VERSION, after, batch_size)).fetchall()
+            if not rows:
+                return
+            after = rows[-1][0]
+            current = [r for r in rows if self.signatures.get(r[1]) == r[3]]
+            if current:
+                texts = [sources[key].passages[row].text for _, key, row, _ in current]
+                vectors = encoder.encode(texts)
+                if stopped():
+                    return
+                with self.db:
+                    # Another window can refresh a source (and reuse its rowids) during inference.
+                    self.db.executemany("""
+                        INSERT OR REPLACE INTO passage_vectors(part,version,embedding)
+                        SELECT p.id,?,? FROM parts p JOIN sources s ON s.key=p.source
+                        WHERE p.id=? AND p.source=? AND p.ordinal=? AND s.signature=?
+                    """, [(VECTOR_VERSION, vec.astype('<f4', copy=False).tobytes(), *r)
+                          for r, vec in zip(current, vectors, strict=True)])
+            yield len(current)
+
+    def semantic_hits(self, topic, encoder, filters, params):
+        import numpy as np
+        query = encoder.encode([topic], query=True)[0]
+        sql = """SELECT s.key,p.ordinal,s.day,v.embedding FROM passage_vectors v
+                 JOIN parts p ON p.id=v.part JOIN sources s ON s.key=p.source WHERE v.version=?"""
+        if filters:
+            sql += ' AND ' + ' AND '.join(filters)
+        cursor = self.db.execute(sql, [VECTOR_VERSION, *params])
+        named = {name for name in self.speakers if name + 'さん' in topic or name + '氏' in topic}
+        scored = []
+        while rows := cursor.fetchmany(512):
+            matrix = np.frombuffer(b''.join(row[3] for row in rows), dtype='<f4').reshape(len(rows), DIMENSION)
+            for row, score in zip(rows, matrix @ query):
+                if score >= 0.835:
+                    if named:
+                        src = self.sources[row[0]]
+                        passage = src.passages[row[1]]
+                        if passage.speaker not in named and not any(
+                                name in field for name in named for field in (passage.text, src.title, src.credit)):
+                            continue
+                    scored.append((float(score), row[:3]))
+        if not scored:
+            return []
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        cutoff = scored[0][0] - 0.06
+        return [row for score, row in scored if score >= cutoff]
+
+    def search(self, question, kind=KINDS[0], order=ORDERS[0], *, today=None, limit=100, encoder=None):
         if len(question) > 500:
             raise ValueError('質問は500文字以内で入力してください。')
         topic, periods = question_dates(unicodedata.normalize('NFKC', question), today or date.today())
@@ -245,6 +315,12 @@ class ResearchIndex:
         if periods:
             filters.append('(' + ' OR '.join('s.day BETWEEN ? AND ?' for _ in periods) + ')')
             params.extend(value for pair in periods for value in pair)
+        semantic = []
+        if encoder and keywords:
+            try:
+                semantic = self.semantic_hits(topic.strip(), encoder, filters, params)
+            except Exception as exc:
+                raise SemanticSearchError(str(exc)) from exc
         groups = []
         if keywords:
             try:
@@ -260,7 +336,7 @@ class ResearchIndex:
             filters.append('words MATCH ?')
         ranking = 'bm25(words, 4, 1, 3),' if groups and order == '関連度順' else ''
         direction = 'ASC' if order == '古い順' else 'DESC'
-        sql = f'SELECT s.key,p.ordinal FROM {table}'
+        sql = f'SELECT s.key,p.ordinal,s.day FROM {table}'
         if filters:
             sql += ' WHERE ' + ' AND '.join(filters)
         sql += f" ORDER BY {ranking} (s.day=''), s.day {direction}, s.key, p.ordinal LIMIT ?"
@@ -268,8 +344,21 @@ class ResearchIndex:
             args = params + ([joiner.join(groups)] if groups else []) + [limit + 1]
             hits = list(self.db.execute(sql, args))
             if hits or len(groups) <= 1:
-                return hits[:limit], joiner == ' OR ', len(hits) > limit
-        return [], False, False
+                break
+        partial = bool(hits) and joiner == ' OR '
+        if semantic:
+            # Reciprocal rank fusion keeps BM25 and cosine on their own scales.
+            scores = {}
+            for ranking in (hits, semantic):
+                for rank, item in enumerate(ranking, 1):
+                    scores[item] = scores.get(item, 0) + 1 / (60 + rank)
+            if order == '関連度順':
+                hits = sorted(scores, key=scores.get, reverse=True)
+            else:
+                hits = sorted(scores)  # Stable source and passage order within a day.
+                hits.sort(key=lambda r: r[2], reverse=direction == 'DESC')
+                hits.sort(key=lambda r: not r[2])
+        return [row[:2] for row in hits[:limit]], partial, len(hits) > limit
 
 
 def summarize(question, evidence):
