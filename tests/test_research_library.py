@@ -203,6 +203,30 @@ class ResearchTests(unittest.TestCase):
             self.assertEqual(pages['両方'], ([('a', 104, '両方')], False, False))
             self.assertEqual(pages['意味が近い'], ([('a', 106, '意味が近い')], False, False))
 
+    def test_reason_counts_include_all_matches_within_kind_and_period(self):
+        rows = (Passage('予算を検討します。'),) * 151 + (Passage('料金を据え置きます。'),) * 121
+        sources = {key: Source(key, kind, '資料', day, '', rows) for key, kind, day in (
+            ('a', '記事', '2025-01-01'), ('b', '記事', '2024-01-01'), ('c', '発言', '2025-01-01'))}
+        with closing(sqlite3.connect(':memory:')) as db:
+            index = ResearchIndex(db, self.tokenizer)
+            index.sync(sources)
+            # Only row 150 matches both, below the lexical fetch window with limit=2.
+            semantic = db.execute(
+                "SELECT source,ordinal,'2025-01-01',id FROM parts WHERE source='a' AND ordinal>=150"
+            ).fetchall()
+            with patch.object(index, 'semantic_hits', return_value=semantic) as vector_search:
+                pages = index.search_pages_with_counts('2025年の予算', '記事', limit=2, encoder=object())
+                vector_search.assert_called_once()
+            self.assertEqual({reason: page.total for reason, page in pages.items()},
+                             {'すべて': 272, 'キーワード一致': 150, '意味が近い': 121, '両方': 1})
+            self.assertTrue(all(len(page.hits) <= 2 for page in pages.values()))
+            partial = index.search_pages_with_counts('2025年の予算 宇宙船', '記事', limit=2)
+            self.assertTrue(partial['すべて'].partial)
+            self.assertEqual(partial['キーワード一致'].total, 151)
+            dates = index.search_pages_with_counts('2025年', '記事', limit=2)
+            self.assertEqual({reason: page.total for reason, page in dates.items()},
+                             {'すべて': 272, 'キーワード一致': 0, '意味が近い': 0, '両方': 0})
+
     def test_full_text_available_while_model_loads_and_after_failure(self):
         from research_ui import index_worker
         requests, events = queue.Queue(), queue.Queue()
@@ -230,12 +254,13 @@ class ResearchTests(unittest.TestCase):
                 query = ('予算', '記事', '関連度順', True)
                 requests.put(('search', 2, query))
                 pages = wait_for('hits')
-                self.assertEqual(pages['キーワード一致'][0], [(key, 0, 'キーワード一致')])
-                self.assertEqual(pages['両方'][0], [])
+                self.assertEqual(pages['キーワード一致'].hits, [(key, 0, 'キーワード一致')])
+                self.assertEqual(pages['キーワード一致'].total, 1)
+                self.assertEqual(pages['両方'].total, 0)
                 release.set()
                 self.assertIn('全文検索を使えます', wait_for('vector_status'))
                 requests.put(('search', 3, query))
-                self.assertEqual(wait_for('hits')['すべて'][0], [(key, 0, 'キーワード一致')])
+                self.assertEqual(wait_for('hits')['すべて'].hits, [(key, 0, 'キーワード一致')])
             finally:
                 stop.set()
                 release.set()

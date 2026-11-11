@@ -93,11 +93,11 @@ def index_worker(root, snapshot, requests, events, stop):
                             threading.Thread(target=prepare_model, daemon=True).start()
                         active = encoder if hybrid and vectors_ready else None
                         try:
-                            result = index.search_pages(question, kind, order, encoder=active)
+                            result = index.search_pages_with_counts(question, kind, order, encoder=active)
                         except SemanticSearchError as exc:
                             vectors_ready = False
                             vector_error(exc)
-                            result = index.search_pages(question, kind, order)
+                            result = index.search_pages_with_counts(question, kind, order)
                         events.put(('hits', number, result))
                 except InterruptedError:
                     return
@@ -216,7 +216,7 @@ class ResearchWindow(tk.Toplevel):
         result_bar = ttk.Frame(frame)
         result_bar.pack(fill='x', pady=6)
         ttk.Label(result_bar, text='一致理由').pack(side='left')
-        self.reason = ttk.Combobox(result_bar, values=REASON_FILTERS, width=14, state='readonly')
+        self.reason = ttk.Combobox(result_bar, values=REASON_FILTERS, width=26, state='readonly')
         self.reason.current(0)
         self.reason.pack(side='left', padx=(4, 10))
         self.reason.bind('<<ComboboxSelected>>', self.filter_results)
@@ -273,7 +273,7 @@ class ResearchWindow(tk.Toplevel):
 
     def refresh(self, saved=None):
         self.number += 1
-        self.pages.clear()
+        self.set_pages({})
         self.refresh_number = self.number
         self.last_request = None
         self.ready = False
@@ -287,7 +287,7 @@ class ResearchWindow(tk.Toplevel):
         if not self.ready:
             return
         self.number += 1
-        self.pages.clear()
+        self.set_pages({})
         self.last_question = self.question.get().strip()
         self.last_request = (self.last_question, self.kind.get(), self.order.get(), self.hybrid.get())
         self.display([])
@@ -327,7 +327,7 @@ class ResearchWindow(tk.Toplevel):
                     self.display([(self.saved_key, 0, '')])
                 self.saved_key = None
             elif op == 'hits':
-                self.pages = value
+                self.set_pages(value)
                 self.filter_results()
             elif op == 'summary':
                 self.show_summary(value)
@@ -335,21 +335,31 @@ class ResearchWindow(tk.Toplevel):
                 self.status.set(value)
         self.timer = self.after(250 if self.state() == 'withdrawn' else 80, self.poll)
 
+    def set_pages(self, pages):
+        selected = self.reason.current()
+        self.pages = pages
+        labels = [f'{reason}（{pages[reason].total:,}件）' for reason in REASON_FILTERS] if pages else REASON_FILTERS
+        self.reason.configure(values=labels)
+        self.reason.current(selected)
+
     def filter_results(self, event=None):
         if not self.pages:
             return
         if event is not None:
             # AI citation numbers belong to the previously displayed rows.
             self.number += 1
-        reason = self.reason.get()
-        hits, partial, more = self.pages[reason]
+        reason = REASON_FILTERS[self.reason.current()]
+        page = self.pages[reason]
+        hits = page.hits
         self.display(hits)
         if hits:
-            self.status.set(('全文検索は一部の検索語で照合　' if partial else '') +
-                            f'{len(hits)} 件を表示' + ('（さらに候補があります）' if more else ''))
+            shown = f'{len(hits)} 件を表示'
+            if page.total > len(hits):
+                shown = f'{page.total:,} 件中 {len(hits)} 件を表示'
+            self.status.set(('全文検索は一部の検索語で照合　' if page.partial else '') + shown)
         elif reason in ('意味が近い', '両方') and not self.hybrid.get():
             self.status.set('この一致理由で探すには「意味の近い表現も探す」をオンにしてください。')
-        elif self.pages['すべて'][0]:
+        elif self.pages['すべて'].total:
             self.status.set(f'「{reason}」は0件です。「すべて」でほかの結果を表示できます。')
         else:
             self.status.set('該当する資料は見つかりませんでした。話題や年代を変えて検索できます。')

@@ -378,6 +378,7 @@ def main():
             assert '大阪' in window.word.cget('values') and '京都' not in window.word.cget('values')
             assert '大阪で開催します。' in window.body.get('1.0', 'end')
 
+            from research_library import REASON_FILTERS, save_article
             from research_ui import ResearchWindow
             from tkinter import ttk
 
@@ -468,7 +469,7 @@ def main():
             assert research.hybrid.get()
             assert research.reason.get() == 'すべて'
             def filter_reason(value):
-                research.reason.set(value)
+                research.reason.current(REASON_FILTERS.index(value))
                 research.reason.event_generate('<<ComboboxSelected>>')
                 root.update()
 
@@ -479,6 +480,8 @@ def main():
                      '準備できません' in research.vector_status.get(), timeout=240)
             assert '全文検索と意味検索' in research.vector_status.get(), research.vector_status.get()
             wait_for(lambda: len(research.hits) == 2)
+            assert research.reason.get() == '意味が近い（2件）'
+            assert tuple(research.reason.cget('values')) == ('すべて（2件）', 'キーワード一致（0件）', '意味が近い（2件）', '両方（0件）')
             assert {research.table.set(str(i), '種類') for i in range(2)} == {'発言', '記事'}
             assert all(research.table.set(i, '一致理由') == '意味が近い' for i in research.table.get_children())
             with patch.object(research.requests, 'put', side_effect=AssertionError('filter repeated the search')):
@@ -491,6 +494,7 @@ def main():
             research.kind.set('記事')
             research.search_btn.invoke()
             wait_for(lambda: len(research.hits) == 1)
+            assert research.reason.get() == '意味が近い（1件）'
             research.open_btn.invoke()
             assert '今の価格を維持します' in research.detail.get('1.0', 'end')
             filter_reason('両方')
@@ -499,6 +503,7 @@ def main():
             research.question.insert(0, '家計への負担を考え、当面は今の価格を維持します。')
             research.search_btn.invoke()
             wait_for(lambda: research.hits and research.table.set('0', '一致理由') == '両方')
+            assert research.reason.get() == '両方（1件）'
             assert research.table.set('0', '番号') == '[1]'
             filter_reason('意味が近い')
             research.question.delete(0, 'end')
@@ -517,8 +522,22 @@ def main():
             wait_for(lambda: 'オンにしてください' in research.status.get())
             filter_reason('すべて')
             wait_for(lambda: '該当する資料は' in research.status.get())
+            assert all(label.endswith('（0件）') for label in research.reason.cget('values'))
             research.destroy()
             window.destroy()
+            save_article(RESULTS, '観測報告', '2040-01-01', '', '\n'.join(['天体観測の報告です。'] * 107))
+            direct.invoke()
+            research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
+            wait_for(lambda: research.ready)
+            research.hybrid.set(False)
+            research.question.insert(0, '2040年の天体観測')
+            research.search_btn.invoke()
+            wait_for(lambda: len(research.hits) == 100)
+            assert tuple(research.reason.cget('values')) == ('すべて（107件）', 'キーワード一致（107件）', '意味が近い（0件）', '両方（0件）')
+            assert '107 件中 100 件' in research.status.get()
+            filter_reason('キーワード一致')
+            assert research.reason.get() == 'キーワード一致（107件）' and len(research.hits) == 100
+            research.destroy()
             assert not errors, errors
         finally:
             root.destroy()
