@@ -10,15 +10,20 @@ from tkinter import filedialog, messagebox, ttk
 
 from engine import RESULTS, timestamp
 from research_library import KINDS, ORDERS, ResearchIndex, collect_sources, import_text, save_article, summarize
+from transcript_library import load_records
 from ui_theme import palette, style_text
 
 
 _summary_lock = threading.Lock()
 
 
-def index_worker(root, records, requests, events, stop):
+def index_worker(root, snapshot, requests, events, stop):
     try:
         from janome.tokenizer import Tokenizer
+        if snapshot is None:
+            snapshot = load_records(root, stop.is_set)
+        if stop.is_set():
+            return
         cache = root.parent / '.research-cache'
         cache.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(cache / 'search-v1.sqlite3', timeout=15)) as db:
@@ -29,10 +34,10 @@ def index_worker(root, records, requests, events, stop):
                     return
                 try:
                     if action == 'refresh':
-                        sources, skipped = collect_sources(root, records)
+                        sources, skipped = collect_sources(root, snapshot[0])
                         index.sync(sources, stop.is_set,
                                    lambda n, total: events.put(('progress', number, f'検索索引を準備中… {n} / {total} 資料')))
-                        events.put(('ready', number, (sources, skipped)))
+                        events.put(('ready', number, (sources, skipped, snapshot)))
                     else:
                         events.put(('hits', number, index.search(*args)))
                 except InterruptedError:
@@ -102,10 +107,12 @@ def article_dialog(parent):
 
 
 class ResearchWindow(tk.Toplevel):
-    def __init__(self, library):
-        super().__init__(library)
+    def __init__(self, app, *, library=None):
+        super().__init__(library if library is not None else app.root)
+        self.app = app
         self.library = library
-        self.transient(library)
+        self.snapshot = (tuple(library.records), library.skipped) if library is not None else None
+        self.transient(self.master)
         self.title('過去の発言・記事を調べる')
         self.geometry('960x630')
         self.minsize(630, 440)
@@ -169,7 +176,7 @@ class ResearchWindow(tk.Toplevel):
         self.detail.pack(fill='both', expand=True)
         self.grab_set()
         self.question.focus_set()
-        threading.Thread(target=index_worker, args=(RESULTS, tuple(library.records), self.requests, self.events, self.stop),
+        threading.Thread(target=index_worker, args=(RESULTS, self.snapshot, self.requests, self.events, self.stop),
                          daemon=True).start()
         self.refresh()
         self.timer = self.after(40, self.poll)
@@ -178,9 +185,10 @@ class ResearchWindow(tk.Toplevel):
         self.stop.set()
         self.requests.put(('close', 0, ()))
         self.after_cancel(self.timer)
-        self.library.research_window = None
+        if self.library is not None:
+            self.library.research_window = None
         super().destroy()
-        if self.library.winfo_exists():
+        if self.library is not None and self.library.winfo_exists():
             self.library.grab_set()
 
     def refresh(self, saved=None):
@@ -215,9 +223,10 @@ class ResearchWindow(tk.Toplevel):
             if op == 'ready':
                 self.ready = True
                 self.search_btn.configure(state='normal')
-                self.sources, skipped = value
+                self.sources, skipped, self.snapshot = value
                 articles = sum(s.kind == '記事' for s in self.sources.values())
                 self.status.set(f'記録 {len(self.sources)-articles} 件・記事 {articles} 件を検索できます。'
+                                + (f'　読み込めない記録 {self.snapshot[1]} 件' if self.snapshot[1] else '')
                                 + (f'　読み込めない記事 {skipped} 件' if skipped else ''))
                 if self.question.get().strip():
                     self.search()
@@ -311,12 +320,18 @@ class ResearchWindow(tk.Toplevel):
         if self.sources[key].kind == '記事':
             self.preview(full=True)
             return
-        for i, record in enumerate(self.library.records):
+        for i, record in enumerate(self.snapshot[0]):
             if record.path.relative_to(RESULTS).as_posix() == key:
+                if self.library is None:
+                    from transcript_library_ui import TranscriptLibrary
+                    self.library = TranscriptLibrary(self.app, snapshot=self.snapshot, citation=(i, row))
+                    self.library.research_window = self
+                    self.transient(self.library)
+                else:
+                    self.library.choose_record(i)
+                    self.library.highlight_row(row)
                 self.withdraw()
                 self.library.grab_set()
-                self.library.choose_record(i)
-                self.library.highlight_row(row)
                 return
 
     def ask_ai(self):

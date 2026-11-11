@@ -15,9 +15,9 @@ from transcript_library import index_nouns, load_records, record_playback_target
 from ui_theme import palette, style_text
 
 
-def scan_library(root, events, stop):
+def scan_library(root, events, stop, snapshot=None):
     try:
-        records, skipped = load_records(root, stop.is_set)
+        records, skipped = load_records(root, stop.is_set) if snapshot is None else snapshot
         events.put(('records', (records, skipped)))
         if records and not stop.is_set():
             from janome.tokenizer import Tokenizer
@@ -54,7 +54,7 @@ def record_table(parent, columns, height):
 class TranscriptLibrary(tk.Toplevel):
     PAGE_SIZE = 50
 
-    def __init__(self, app):
+    def __init__(self, app, *, snapshot=None, citation=None):
         super().__init__(app.root)
         self.withdraw()
         self.app = app
@@ -68,6 +68,7 @@ class TranscriptLibrary(tk.Toplevel):
         self.shared = set()
         self.error = None
         self.research_window = None
+        self.initial_citation = citation
         self.selected = self.key = None
         self.query_text = ''
         self.synsets = {}
@@ -195,7 +196,7 @@ class TranscriptLibrary(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self.destroy)
         app.window_settings.attach(self, 'library')
         self.grab_set()
-        threading.Thread(target=scan_library, args=(RESULTS, self.events, self.stop), daemon=True).start()
+        threading.Thread(target=scan_library, args=(RESULTS, self.events, self.stop, snapshot), daemon=True).start()
         self.timer = self.after(40, self.poll)
 
     def set_colors(self):
@@ -205,6 +206,8 @@ class TranscriptLibrary(tk.Toplevel):
 
     def destroy(self):
         self.stop.set()
+        if self.research_window is not None:
+            self.research_window.destroy()
         self.waveform.close()
         self.stop_audio()
         if self.timer is not None:
@@ -230,7 +233,12 @@ class TranscriptLibrary(tk.Toplevel):
                     self.listing.insert('', 'end', iid=str(i), values=(record.date.strftime('%Y/%m/%d %H:%M'), record.title))
                     if self.app.result_path and self.app.result_path.parent == record.path.parent:
                         first = i
-                if self.records:
+                if self.initial_citation is not None:
+                    i, row = self.initial_citation
+                    self.initial_citation = None
+                    self.choose_record(i)
+                    self.highlight_row(row)
+                elif self.records:
                     self.choose_record(first)
             elif kind == 'index':
                 i, index = payload
@@ -605,7 +613,7 @@ class TranscriptLibrary(tk.Toplevel):
         from research_ui import ResearchWindow
         self.stop_audio()
         if self.research_window is None:
-            self.research_window = ResearchWindow(self)
+            self.research_window = ResearchWindow(self.app, library=self)
         else:
             self.research_window.deiconify()
             self.research_window.lift()
@@ -639,11 +647,16 @@ class TranscriptLibrary(tk.Toplevel):
         self.destroy()
 
 
-def open_library(app):
+def open_library(app, *, research=False):
     if app.proc:
         return
     try:
         app.persist_edits()
-        TranscriptLibrary(app)
+        if research:
+            from research_ui import ResearchWindow
+            ResearchWindow(app)
+        else:
+            TranscriptLibrary(app)
     except (OSError, ValueError) as exc:
-        messagebox.showerror('保存した記録を開けません', str(exc), parent=app.root)
+        title = '検索画面を開けません' if research else '保存した記録を開けません'
+        messagebox.showerror(title, str(exc), parent=app.root)

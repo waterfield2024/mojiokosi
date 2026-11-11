@@ -122,6 +122,9 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         from transcript_library_ui import open_library
         self.open_button = ttk.Button(heading, text="保存した記録", command=lambda: open_library(self))
         self.open_button.grid(row=1, column=4, sticky="ew", padx=(8, 0), pady=(4, 0))
+        self.research_button = ttk.Button(heading, text="過去の発言・記事を調べる…",
+                                          command=lambda: open_library(self, research=True))
+        self.research_button.grid(row=1, column=1, columnspan=3, sticky="e", pady=(4, 0))
         value = load_compute()
         self.compute = tk.StringVar(value=next(k for k, v in COMPUTE_OPTIONS.items() if v == value))
         self.compute_combo = ttk.Combobox(heading, textvariable=self.compute,
@@ -452,6 +455,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.stage = "準備中…"
         self.start_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
+        self.research_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.update_video_controls()
         self.progress.configure(mode="indeterminate")
@@ -656,6 +660,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
                     self.update_video_controls()
                     self.start_button.configure(state="normal")
                     self.open_button.configure(state="normal")
+                    self.research_button.configure(state="normal")
                     self.cancel_button.configure(state="disabled")
                     if self.cancelled:
                         if self.context_checkpoint and not self.completed:

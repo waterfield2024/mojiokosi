@@ -64,6 +64,9 @@ def main():
             assert saved.winfo_ismapped() and saved.master is appearance.master, (root.state(), root.geometry(), saved.winfo_geometry())
             assert saved.winfo_rootx() == appearance.winfo_rootx() and saved.winfo_width() == appearance.winfo_width()
             assert saved.winfo_rooty() >= appearance.winfo_rooty() + appearance.winfo_height()
+            direct = app.research_button
+            assert direct.winfo_ismapped() and direct.master is saved.master
+            assert direct.winfo_rooty() == saved.winfo_rooty() and direct.winfo_rootx() + direct.winfo_width() <= saved.winfo_rootx()
             window = open_records()
             assert [r.title for r in window.records] == ['今回の会議', '以前の会議']
             assert not window.waveform.winfo_ismapped()
@@ -427,6 +430,34 @@ def main():
             assert window.grab_current() == research and research.table.selection() == ('1',)
             research.destroy()
             window.destroy()
+
+            direct.invoke()
+            research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
+            research.destroy()
+            assert root.grab_current() is None
+            direct.invoke()
+            research = next(w for w in root.winfo_children() if isinstance(w, ResearchWindow))
+            wait_for(lambda: research.ready)
+            assert research.winfo_viewable() and root.grab_current() == research
+            assert not any(isinstance(w, TranscriptLibrary) for w in root.winfo_children())
+            research.question.insert(0, '京都')
+            research.order.set('古い順')
+            research.search_btn.invoke()
+            wait_for(lambda: len(research.hits) == 3)
+            research.open_btn.invoke()
+            assert research.detail_title.get() == '記事の原文' and research.library is None
+            research.table.selection_set('2')
+            research.open_btn.invoke()
+            window = research.library
+            wait_for(lambda: window.focus_row is not None)
+            assert window.grab_current() == window and window.body.get('match.first', 'match.last') == '京都に戻ります。'
+            window.research_btn.invoke()
+            root.update()
+            assert root.grab_current() == research and research.table.selection() == ('2',) and research.question.get() == '京都'
+            research.open_btn.invoke()
+            window.destroy()
+            root.update()
+            assert not research.winfo_exists() and root.grab_current() is None
             assert not errors, errors
         finally:
             root.destroy()
