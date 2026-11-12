@@ -7,30 +7,34 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
 
-FONT = "Yu Gothic UI"
+FONT = "Hiragino Sans" if IS_MAC else "Yu Gothic UI"
 THEME_OPTIONS = {("Macに合わせる" if IS_MAC else "Windowsに合わせる"): "system", "ライト": "light", "ダーク": "dark"}
 PALETTES = {
-    "light": dict(page="#f3f5fa", surface="#ffffff", ink="#20283f", muted="#64748b",
-                  line="#dfe5ef", accent="#5256d8", primary="#5256d8", on_primary="#ffffff",
-                  tint="#eef0ff", disabled="#f7f8fb", disabled_ink="#8b95a7",
-                  pressed="#e8ebf6", hover="#f0f2f9", hover_line="#bcc5d9",
-                  primary_disabled="#e5e7f3", primary_disabled_ink="#7c85a5",
-                  primary_pressed="#383cb2", primary_hover="#4448c8", soft_hover="#e2e5ff",
-                  selected="#e9ecff", selected_ink="#3035a4", heading="#f5f7fb",
-                  heading_hover="#edf0f8", track="#e6eaf2", scroll="#cdd4e2", scroll_hover="#a9b3c7",
-                  stripe="#f8f9fd", before="#ffe1e1", before_ink="#7d202c",
+    "light": dict(page="#eef2ef", surface="#ffffff", ink="#192f2c", muted="#506661",
+                  line="#cdd9d3", accent="#076c56", primary="#086c56", on_primary="#ffffff",
+                  tint="#dff2e8", disabled="#f1f4f2", disabled_ink="#687b73",
+                  pressed="#dce8e1", hover="#eff6f1", hover_line="#92afa1",
+                  primary_disabled="#e1eae4", primary_disabled_ink="#637a6c",
+                  primary_pressed="#074a3c", primary_hover="#075b48", soft_hover="#c6e8d6",
+                  selected="#d7eedf", selected_ink="#103e30", heading="#f2f6f3",
+                  heading_hover="#e5eee8", track="#dbe5de", scroll="#c0cec5", scroll_hover="#93a69a",
+                  mast="#183932", mast_ink="#f4fbf5", mast_muted="#c2d7cb", mark="#b7eed0",
+                  mast_button="#294c43", mast_line="#507065", mast_hover="#365d51",
+                  stripe="#f7faf8", before="#ffe1e1", before_ink="#7d202c",
                   after="#d9f1df", after_ink="#205931",
                   diff_whisper="#ffe4bd", diff_whisper_ink="#713c08",
                   diff_granite="#dbeaff", diff_granite_ink="#16477e"),
-    "dark": dict(page="#111622", surface="#1b2232", ink="#e7ecf5", muted="#a5b2c9",
-                 line="#354158", accent="#b0adff", primary="#7068e8", on_primary="#ffffff",
-                 tint="#2d3050", disabled="#202838", disabled_ink="#7f8ca5",
-                 pressed="#363f57", hover="#2a3449", hover_line="#566582",
-                 primary_disabled="#303651", primary_disabled_ink="#8e9ab4",
-                 primary_pressed="#544cbe", primary_hover="#7d74f2", soft_hover="#3b3d65",
-                 selected="#3b3e6b", selected_ink="#f1efff", heading="#242d40",
-                 heading_hover="#303b52", track="#2c364b", scroll="#46546e", scroll_hover="#647595",
-                 stripe="#20293b", before="#512e3c", before_ink="#ffc3ce",
+    "dark": dict(page="#101816", surface="#1c2824", ink="#edf5ef", muted="#b1c3b8",
+                 line="#3c5046", accent="#98dfb9", primary="#94dfb6", on_primary="#102e22",
+                 tint="#294438", disabled="#24312b", disabled_ink="#91a297",
+                 pressed="#344c3e", hover="#2a3a31", hover_line="#658671",
+                 primary_disabled="#314438", primary_disabled_ink="#a1b8a8",
+                 primary_pressed="#badfc9", primary_hover="#aaedc7", soft_hover="#345641",
+                 selected="#32533f", selected_ink="#e6f9eb", heading="#24342b",
+                 heading_hover="#304537", track="#2d3f33", scroll="#42574a", scroll_hover="#637a6b",
+                 mast="#132e26", mast_ink="#eff9f0", mast_muted="#b6cec0", mark="#a8e7bc",
+                 mast_button="#254438", mast_line="#496354", mast_hover="#345645",
+                 stripe="#202e27", before="#512e3c", before_ink="#ffc3ce",
                  after="#24483e", after_ink="#b7f0cd",
                  diff_whisper="#543d24", diff_whisper_ink="#ffdaa1",
                  diff_granite="#263e61", diff_granite_ink="#c2dcff"),
@@ -156,13 +160,14 @@ def _refresh_widgets(widget):
     role = getattr(widget, "_whisper_theme_role", None)
     if role == "text":
         style_text(widget)
-        if hasattr(widget, '_whisper_refresh_tags'):
-            widget._whisper_refresh_tags()
     elif role == "brand":
-        widget.configure(background=colors["page"])
-        widget.itemconfigure("wave", fill=colors["accent"])
+        widget.configure(background=colors["mast"])
+        widget.itemconfigure("tile", fill=colors["mark"])
+        widget.itemconfigure("wave", fill=colors["mast"])
     if isinstance(widget, TranscriptTree):
         widget.tag_configure("stripe", background=colors["stripe"])
+    if hasattr(widget, '_whisper_refresh_tags'):
+        widget._whisper_refresh_tags()
     for child in widget.winfo_children():
         _refresh_widgets(child)
 
@@ -175,6 +180,54 @@ def _refresh_listboxes(interpreter, widget, colors):
                          "-selectforeground", colors["selected_ink"], "-highlightbackground", colors["line"])
     for child in interpreter.splitlist(interpreter.call("winfo", "children", widget)):
         _refresh_listboxes(interpreter, child, colors)
+
+
+def _rounded_controls(root, style, mode):
+    """Nine-slice backgrounds keep native widget sizing, focus and key bindings."""
+    from PIL import Image, ImageDraw, ImageTk
+    c = PALETTES[mode]
+    if not hasattr(root, '_whisper_tiles'):
+        root._whisper_tiles = {}
+    def tile(fill, edge, stroke=1, radius=7):
+        key = (fill, edge, stroke, radius)
+        if key not in root._whisper_tiles:
+            # ttk tiles the centre. A broad solid area also paints large panels efficiently.
+            size = radius * 2 + 66
+            bitmap = Image.new('RGBA', (size * 3, size * 3))
+            ImageDraw.Draw(bitmap).rounded_rectangle((0, 0, bitmap.width - 1, bitmap.height - 1),
+                                                     radius * 3, fill, edge, width=stroke * 3)
+            root._whisper_tiles[key] = ImageTk.PhotoImage(bitmap.resize((size, size), Image.Resampling.LANCZOS), master=root)
+        return root._whisper_tiles[key]
+
+    prefix = f'Whisper.{mode}.'
+    controls = (
+        ('TButton', 'surface', 'line', 'hover', 'pressed', 'accent'),
+        ('Accent.TButton', 'primary', 'primary', 'primary_hover', 'primary_pressed', 'on_primary'),
+        ('Soft.TButton', 'tint', 'tint', 'soft_hover', 'soft_hover', 'accent'),
+        ('Mast.TButton', 'mast_button', 'mast_line', 'mast_hover', 'mast', 'mark'),
+        ('Source.TRadiobutton', 'surface', 'line', 'hover', 'pressed', 'accent'),
+    )
+    for name, fill, edge, hover, pressed, focus in controls:
+        element = prefix + name
+        if element not in style.element_names():
+            inactive = 'primary_disabled' if name == 'Accent.TButton' else 'disabled'
+            states = [('disabled', tile(c[inactive], c[inactive])),
+                      ('pressed', tile(c[pressed], c[edge]))]
+            if name == 'Source.TRadiobutton':
+                states.insert(0, ('disabled', 'selected', tile(c['primary_disabled'], c['muted'])))
+                states.extend([('selected', 'focus', tile(c['tint'], c['accent'], 2)),
+                               ('selected', tile(c['tint'], c['accent']))])
+            states.extend([('focus', tile(c[fill], c[focus], 2)), ('active', tile(c[hover], c[edge]))])
+            style.element_create(element, 'image', tile(c[fill], c[edge]), *states,
+                                 width=16, height=16, border=8, padding=0, sticky='nswe')
+        label = 'Radiobutton' if name == 'Source.TRadiobutton' else 'Button'
+        style.layout(name, [(element, {'sticky': 'nswe', 'children': [
+            (label + '.padding', {'sticky': 'nswe', 'children': [(label + '.label', {'sticky': 'nswe'})]})]})])
+    card = prefix + 'card'
+    if card not in style.element_names():
+        style.element_create(card, 'image', tile(c['surface'], c['line'], radius=10),
+                             width=22, height=22, border=11, padding=1, sticky='nswe')
+    style.layout('Card.TFrame', [(card, {'sticky': 'nswe'})])
 
 
 def apply_theme(root, mode="light"):
@@ -196,37 +249,40 @@ def apply_theme(root, mode="light"):
                     bordercolor=c["line"], lightcolor=c["surface"], darkcolor=c["surface"], focuscolor=c["accent"])
     style.configure("TFrame", background=c["surface"])
     style.configure("App.TFrame", background=c["page"])
-    style.configure("Card.TFrame", background=c["surface"], bordercolor=c["line"], borderwidth=1, relief="solid")
+    style.configure("Mast.TFrame", background=c["mast"])
+    style.configure("Mast.TLabel", background=c["mast"], foreground=c["mast_ink"], font=(FONT, 18, "bold"))
+    style.configure("Mast.Sub.TLabel", background=c["mast"], foreground=c["mast_muted"], font=(FONT, 9))
+    style.configure("Wordmark.TLabel", background=c["mast"], foreground=c["mast_ink"],
+                    font=("Helvetica Neue" if IS_MAC else "Segoe UI", 24, "bold"))
+    style.configure("Card.TFrame", background=c["page"])
     style.configure("TLabel", background=c["surface"], foreground=c["ink"])
     style.configure("Title.TLabel", background=c["page"], foreground=c["ink"], font=(FONT, 23, "bold"))
     style.configure("App.Sub.TLabel", background=c["page"], foreground=c["muted"], font=(FONT, 9))
     style.configure("Sub.TLabel", foreground=c["muted"], font=(FONT, 9))
     style.configure("Empty.TLabel", foreground=c["muted"], font=(FONT, 11, "bold"))
-    style.configure("Section.TLabel", font=(FONT, 11, "bold"))
+    style.configure("Section.TLabel", font=(FONT, 13, "bold"))
     for side in ("whisper", "granite"):
         style.configure(f"Diff.{side}.TLabel", background=c["diff_"+side], foreground=c["diff_"+side+"_ink"], padding=(6, 2))
     style.configure("Preview.Title.TLabel", background=c["surface"], foreground=c["ink"], font=(FONT, 14, "bold"))
     style.configure("Preview.Horizontal.TScale", background=c["primary"], troughcolor=c["track"],
                     bordercolor=c["line"], lightcolor=c["primary"], darkcolor=c["primary"], sliderlength=24)
     style.map("Preview.Horizontal.TScale", background=[("disabled",c["disabled"]),("active",c["primary_hover"])])
-    style.configure("Badge.TLabel", background=c["tint"], foreground=c["accent"], font=("Segoe UI", 10, "bold"), padding=(7, 3))
+    style.configure("Step.TLabel", foreground=c["accent"], font=(FONT, 10, "bold"))
     style.configure("TLabelframe", background=c["surface"], bordercolor=c["line"], borderwidth=1, relief="solid")
     style.configure("TLabelframe.Label", background=c["surface"], foreground=c["muted"], font=(FONT, 9, "bold"))
-    style.configure("TButton", background=c["surface"], foreground=c["ink"], bordercolor=c["line"],
-                    lightcolor=c["surface"], darkcolor=c["surface"], borderwidth=1, relief="flat",
-                    padding=(11, 6), focusthickness=1, focuscolor=c["accent"])
-    style.map("TButton", background=[("disabled", c["disabled"]), ("pressed", c["pressed"]), ("active", c["hover"])],
-              foreground=[("disabled", c["disabled_ink"])], bordercolor=[("focus", c["accent"]), ("active", c["hover_line"])])
-    style.configure("Accent.TButton", background=c["primary"], foreground=c["on_primary"], bordercolor=c["primary"],
-                    lightcolor=c["primary"], darkcolor=c["primary"], font=(FONT, 10, "bold"), padding=(15, 7))
-    style.map("Accent.TButton", background=[("disabled", c["primary_disabled"]), ("pressed", c["primary_pressed"]), ("active", c["primary_hover"])],
-              foreground=[("disabled", c["primary_disabled_ink"]), ("!disabled", c["on_primary"])],
-              bordercolor=[("disabled", c["primary_disabled"]), ("!disabled", c["primary"])],
-              lightcolor=[("disabled", c["primary_disabled"]), ("!disabled", c["primary"])],
-              darkcolor=[("disabled", c["primary_disabled"]), ("!disabled", c["primary"])])
-    style.configure("Soft.TButton", background=c["tint"], foreground=c["accent"], bordercolor=c["tint"])
-    style.map("Soft.TButton", background=[("disabled", c["disabled"]), ("active", c["soft_hover"])],
-              foreground=[("disabled", c["disabled_ink"]), ("!disabled", c["accent"])])
+    style.configure("TButton", background=c["surface"], foreground=c["ink"], padding=(11, 6))
+    style.map("TButton", background=[("!disabled", c["surface"]), ("disabled", c["surface"])],
+              foreground=[("disabled", c["disabled_ink"])])
+    style.configure("Accent.TButton", foreground=c["on_primary"], font=(FONT, 10, "bold"), padding=(15, 7))
+    style.map("Accent.TButton", foreground=[("disabled", c["primary_disabled_ink"]), ("!disabled", c["on_primary"])])
+    style.configure("Soft.TButton", foreground=c["accent"])
+    style.map("Soft.TButton", foreground=[("disabled", c["disabled_ink"]), ("!disabled", c["accent"])])
+    style.configure("Mast.TButton", foreground=c["mast_ink"], padding=(12, 5))
+    style.map("Mast.TButton", background=[("!disabled", c["mast"]), ("disabled", c["mast"])])
+    for action_style in ("Action.TButton", "Action.Accent.TButton", "Action.Soft.TButton"):
+        style.map(action_style, background=[("!disabled", c["page"]), ("disabled", c["page"])])
+    style.configure("Source.TRadiobutton", foreground=c["muted"], padding=(10, 5))
+    style.map("Source.TRadiobutton", foreground=[("disabled", c["disabled_ink"]), ("selected", c["accent"])])
     style.configure("TEntry", fieldbackground=c["surface"], foreground=c["ink"], padding=(8, 6), bordercolor=c["line"],
                     lightcolor=c["surface"], darkcolor=c["surface"], insertcolor=c["ink"],
                     selectbackground=c["selected"], selectforeground=c["selected_ink"])
@@ -243,6 +299,12 @@ def apply_theme(root, mode="light"):
               foreground=[("disabled", c["disabled_ink"]), ("readonly", c["ink"])],
               selectbackground=[("readonly", c["surface"])], selectforeground=[("readonly", c["ink"])],
               bordercolor=[("focus", c["accent"])], background=[("active", c["hover"])])
+    style.configure("Mast.TCombobox", bordercolor=c["mast_line"], arrowcolor=c["mast_ink"],
+                    lightcolor=c["mast_button"], darkcolor=c["mast_button"])
+    style.map("Mast.TCombobox", fieldbackground=[("readonly", c["mast_button"])],
+              foreground=[("readonly", c["mast_ink"])], selectbackground=[("readonly", c["mast_button"])],
+              selectforeground=[("readonly", c["mast_ink"])], background=[("readonly", c["mast_button"])],
+              bordercolor=[("focus", c["mark"]), ("!focus", c["mast_line"])])
     for control in ("TCheckbutton", "TRadiobutton"):
         style.configure(control, background=c["surface"], foreground=c["ink"], padding=(0, 3),
                         indicatorbackground=c["surface"], indicatorforeground=c["on_primary"],
@@ -265,6 +327,7 @@ def apply_theme(root, mode="light"):
         style.configure(name, background=c["scroll"], troughcolor=c["heading"], borderwidth=0,
                         arrowsize=12, arrowcolor=c["muted"], lightcolor=c["scroll"], darkcolor=c["scroll"])
         style.map(name, background=[("active", c["scroll_hover"])])
+    _rounded_controls(root, style, mode)
     if not getattr(root, "_whisper_theme_bound", False):
         root.bind_all("<Map>", _map_window, add="+")
         root._whisper_theme_bound = True
@@ -275,20 +338,57 @@ def apply_theme(root, mode="light"):
 
 def section_title(parent, number, title):
     row = ttk.Frame(parent)
-    ttk.Label(row, text=number, style="Badge.TLabel").pack(side="left", padx=(0, 9))
+    ttk.Label(row, text=number, style="Step.TLabel").pack(side="left", padx=(0, 9))
     ttk.Label(row, text=title, style="Section.TLabel").pack(side="left")
     return row
 
 
+def window_heading(parent, title):
+    header = ttk.Frame(parent, style="Mast.TFrame", padding=(18, 10))
+    header.pack(fill="x")
+    ttk.Label(header, text=title, style="Mast.TLabel").pack(side="left")
+    return header
+
+
+def action_icon(button, symbol):
+    from PIL import Image, ImageDraw, ImageTk
+
+    def refresh():
+        style = ttk.Style(button)
+        images = []
+        for state in ('!disabled', 'disabled'):
+            color = style.lookup(button.cget('style'), 'foreground', (state,))
+            bitmap = Image.new('RGBA', (60, 48))
+            draw = ImageDraw.Draw(bitmap)
+            if symbol == 'play':
+                draw.polygon(((10, 6), (10, 42), (40, 24)), fill=color)
+            elif symbol == 'stop':
+                draw.rounded_rectangle((8, 8, 38, 38), radius=4, fill=color)
+            elif symbol == 'compare':
+                for x in (3, 25):
+                    draw.rounded_rectangle((x, 7, x + 16, 40), radius=3, outline=color, width=4)
+            elif symbol == 'wave':
+                for x, height in ((4, 10), (15, 26), (26, 38), (37, 16)):
+                    draw.rounded_rectangle((x, 24-height//2, x+5, 24+height//2), radius=2, fill=color)
+            images.append(ImageTk.PhotoImage(bitmap.resize((20, 16), Image.Resampling.LANCZOS), master=button))
+        button.configure(image=(images[0], 'disabled', images[1]), compound='left')
+        button._whisper_icons = images
+
+    button._whisper_refresh_tags = refresh
+    refresh()
+
+
 def brand(parent):
-    row = ttk.Frame(parent, style="App.TFrame")
+    row = ttk.Frame(parent, style="Mast.TFrame")
     c = palette(parent)
-    icon = tk.Canvas(row, width=36, height=36, background=c["page"], highlightthickness=0)
+    icon = tk.Canvas(row, width=44, height=44, background=c["mast"], highlightthickness=0)
     icon._whisper_theme_role = "brand"
     icon.pack(side="left", padx=(0, 11))
-    for x, height in ((4, 10), (11, 22), (18, 32), (25, 18), (32, 8)):
-        icon.create_line(x, 18-height/2, x, 18+height/2, fill=c["accent"], width=4, capstyle="round", tags="wave")
-    ttk.Label(row, text="Whisper", style="Title.TLabel").pack(side="left")
+    icon.create_polygon(2, 12, 2, 2, 12, 2, 32, 2, 42, 2, 42, 12, 42, 32, 42, 42, 32, 42,
+                        12, 42, 2, 42, 2, 32, smooth=True, fill=c["mark"], tags="tile")
+    for x, height in ((10, 6), (16, 15), (22, 25), (28, 13), (34, 5)):
+        icon.create_line(x, 22-height/2, x, 22+height/2, fill=c["mast"], width=3, capstyle="round", tags="wave")
+    ttk.Label(row, text="Whisper", style="Wordmark.TLabel").pack(side="left")
     return row
 
 

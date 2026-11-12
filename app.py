@@ -46,7 +46,7 @@ from comparison_ui import ComparisonControls
 from context_ai import ensure_segment_ids
 from speakers import normalize_names
 from asr import COMPUTE_OPTIONS, load_compute, save_compute
-from ui_theme import (ThemeController, brand, section_title, style_text, TranscriptTree,
+from ui_theme import (FONT, ThemeController, action_icon, brand, section_title, style_text, TranscriptTree,
                       THEME_OPTIONS, load_theme, save_theme)
 
 from recognition_models import FILE_MODELS as MODEL_OPTIONS,model_hint
@@ -105,33 +105,33 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         r.minsize(min(900, width), min(800, height))
         mode = load_theme()
         self.theme_controller = ThemeController(r, mode)
-        outer = ttk.Frame(r, padding=(20, 14), style="App.TFrame")
+        heading = ttk.Frame(r, padding=(22, 10), style="Mast.TFrame")
+        heading.pack(fill="x")
+        outer = ttk.Frame(r, padding=(18, 12), style="App.TFrame")
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(4, weight=1)
-        heading = ttk.Frame(outer, style="App.TFrame")
-        heading.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         heading.columnconfigure(0, weight=1)
-        brand(heading).grid(row=0, column=0, sticky="w")
+        brand(heading).grid(row=0, column=0, rowspan=2, sticky="w")
         self.appearance = tk.StringVar(value=next(k for k, v in THEME_OPTIONS.items() if v == mode))
         self.appearance_combo = ttk.Combobox(heading, textvariable=self.appearance,
-                                            values=list(THEME_OPTIONS), state="readonly", width=19)
+                                            values=list(THEME_OPTIONS), state="readonly", width=19, style="Mast.TCombobox")
         self.appearance_combo.grid(row=0, column=4, sticky="ew", padx=(8, 0))
         self.appearance_combo.bind("<<ComboboxSelected>>", lambda event: self.change_appearance())
-        ttk.Label(heading, text="外観", style="App.Sub.TLabel").grid(row=0, column=3, padx=(14, 0))
+        ttk.Label(heading, text="外観", style="Mast.Sub.TLabel").grid(row=0, column=3, padx=(14, 0))
         from transcript_library_ui import open_library
-        self.open_button = ttk.Button(heading, text="保存した記録", command=lambda: open_library(self))
+        self.open_button = ttk.Button(heading, text="保存した記録", style="Mast.TButton", command=lambda: open_library(self))
         self.open_button.grid(row=1, column=4, sticky="ew", padx=(8, 0), pady=(4, 0))
-        self.research_button = ttk.Button(heading, text="過去の発言・記事を調べる…",
+        self.research_button = ttk.Button(heading, text="過去の発言・記事を調べる…", style="Mast.TButton",
                                           command=lambda: open_library(self, research=True))
         self.research_button.grid(row=1, column=1, columnspan=3, sticky="e", pady=(4, 0))
         value = load_compute()
         self.compute = tk.StringVar(value=next(k for k, v in COMPUTE_OPTIONS.items() if v == value))
         self.compute_combo = ttk.Combobox(heading, textvariable=self.compute,
-                                          values=list(COMPUTE_OPTIONS), state="readonly", width=10)
+                                          values=list(COMPUTE_OPTIONS), state="readonly", width=10, style="Mast.TCombobox")
         self.compute_combo.grid(row=0, column=2)
         self.compute_combo.bind("<<ComboboxSelected>>", lambda event: self.save_compute_choice())
-        ttk.Label(heading, text="処理方式", style="App.Sub.TLabel").grid(row=0, column=1, padx=(14, 8))
+        ttk.Label(heading, text="処理方式", style="Mast.Sub.TLabel").grid(row=0, column=1, padx=(14, 8))
 
         source_box = ttk.Frame(outer, style="Card.TFrame", padding=(16, 12))
         source_box.grid(row=1, column=0, sticky="ew")
@@ -140,25 +140,32 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.mode = tk.StringVar(value="youtube")
         radios = ttk.Frame(source_heading)
         radios.pack(side="right")
-        ttk.Radiobutton(radios, text="YouTubeのURL", variable=self.mode, value="youtube", command=self.change_mode).pack(side="left", padx=(0, 18))
-        ttk.Radiobutton(radios, text="PCの音声・動画", variable=self.mode, value="file", command=self.change_mode).pack(side="left")
+        ttk.Radiobutton(radios, text="YouTubeのURL", variable=self.mode, value="youtube", style="Source.TRadiobutton",
+                        command=self.change_mode).pack(side="left", padx=(0, 4))
+        ttk.Radiobutton(radios, text="PCの音声・動画", variable=self.mode, value="file", style="Source.TRadiobutton",
+                        command=self.change_mode).pack(side="left")
         row = ttk.Frame(source_box)
         row.pack(fill="x")
         self.source = tk.StringVar()
-        self.entry = ttk.Entry(row, textvariable=self.source, font=("Yu Gothic UI", 11))
+        self.entry = ttk.Entry(row, textvariable=self.source, font=(FONT, 11))
         self.entry.pack(side="left", fill="x", expand=True)
         self.browse_button = ttk.Button(row, text="ファイルを選ぶ", command=self.browse, state="disabled")
         self.browse_button.pack(side="left", padx=(8, 0))
         settings = ttk.Frame(source_box)
         settings.pack(fill="x", pady=(9, 8))
-        ttk.Label(settings, text="言語", style="Sub.TLabel").pack(side="left", padx=(0, 7))
+        for column, label in enumerate(("言語", "認識モデル", "話者数", "話題・専門用語（任意）")):
+            ttk.Label(settings, text=label, style="Sub.TLabel").grid(row=0, column=column, sticky="w", pady=(0, 3))
+        settings.columnconfigure(3, weight=1)
         self.language = tk.StringVar(value="日本語")
-        ttk.Combobox(settings, textvariable=self.language, values=list(LANG_OPTIONS), state="readonly", width=10).pack(side="left")
-        ttk.Label(settings, text="認識モデル", style="Sub.TLabel").pack(side="left", padx=(20, 7))
+        ttk.Combobox(settings, textvariable=self.language, values=list(LANG_OPTIONS), state="readonly",
+                     width=10).grid(row=1, column=0, sticky="ew", padx=(0, 14))
         self.model = tk.StringVar(value="軽量・base")
         self.model_combo = ttk.Combobox(settings, textvariable=self.model, values=list(MODEL_OPTIONS), state="readonly", width=24)
-        self.model_combo.pack(side="left")
+        self.model_combo.grid(row=1, column=1, sticky="ew", padx=(0, 14))
         self.build_speaker_options(settings)
+        self.prompt = tk.Text(settings, height=1, width=15, wrap="word", font=(FONT, 10))
+        style_text(self.prompt)
+        self.prompt.grid(row=1, column=3, sticky="ew")
         self.model_message = tk.StringVar(value=model_hint(MODEL_OPTIONS[self.model.get()]))
         self.model_combo.bind("<<ComboboxSelected>>",lambda event:self.model_message.set(model_hint(MODEL_OPTIONS[self.model.get()])))
         ttk.Label(source_box,textvariable=self.model_message,style="Sub.TLabel",wraplength=800).pack(anchor="w")
@@ -166,21 +173,18 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         controls.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         transcription_controls = ttk.Frame(controls, style="App.TFrame")
         transcription_controls.pack(side="left", anchor="s")
-        self.start_button = ttk.Button(transcription_controls, text="話者判別・文字起こしを開始", style="Accent.TButton", command=self.start)
+        self.start_button = ttk.Button(transcription_controls, text="話者判別・文字起こしを開始", style="Action.Accent.TButton", command=self.start)
         self.start_button.pack(side="left", fill="y")
-        self.cancel_button = ttk.Button(transcription_controls, text="停止", command=self.cancel, state="disabled")
+        self.cancel_button = ttk.Button(transcription_controls, text="停止", style="Action.TButton", command=self.cancel, state="disabled")
         self.cancel_button.pack(side="left", fill="y", padx=(8, 0))
-        self.compare_button = ttk.Button(transcription_controls,text="2モデルで比較…",command=self.open_comparison)
+        self.compare_button = ttk.Button(transcription_controls,text="2モデルで比較…",style="Action.TButton",command=self.open_comparison)
         self.compare_button.pack(side="left",fill="y",padx=(8,0))
         self.build_live_button(transcription_controls)
-        self.live_button.configure(style="Soft.TButton")
+        self.live_button.configure(style="Action.Soft.TButton")
         self.live_button.pack_configure(side="left", fill="y", padx=(8, 0))
-        prompt_row = ttk.Frame(source_box)
-        prompt_row.pack(fill="x", pady=(8, 0))
-        ttk.Label(prompt_row, text="話題・専門用語（任意）", style="Sub.TLabel").pack(anchor="w", pady=(0, 3))
-        self.prompt = tk.Text(prompt_row, height=1, width=25, wrap="word", font=("Yu Gothic UI", 10))
-        style_text(self.prompt)
-        self.prompt.pack(side="left", fill="x", expand=True)
+        for button, symbol in ((self.start_button, 'play'), (self.cancel_button, 'stop'),
+                               (self.compare_button, 'compare'), (self.live_button, 'wave')):
+            action_icon(button, symbol)
 
         progress_area = ttk.Frame(outer, style="App.TFrame")
         progress_area.grid(row=3, column=0, sticky="ew", pady=(8, 9))
@@ -208,7 +212,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.table = TranscriptTree(table_frame, columns=("start", "end", "speaker", "text"),
                                     displaycolumns=("speaker", "start", "end", "text"), show="headings", selectmode="browse", height=7)
         for key, title, col_width in (("start", "開始", 80), ("end", "終了", 80), ("speaker", "話者（？は要確認）", 160), ("text", "文字起こし結果", 540)):
-            self.table.heading(key, text=title)
+            self.table.heading(key, text=title, anchor="w")
             self.table.column(key, width=col_width, minwidth=70, stretch=key == "text")
         scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.table.yview)
         self.table.configure(yscrollcommand=scroll.set)
@@ -217,7 +221,7 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.table.show_empty("文字起こしの結果がここに表示されます", "動画を選んで開始するか、以前の結果を開いてください。")
         self.table.bind("<<TreeviewSelect>>", self.select)
         editor_hint = self.build_speaker_editor(result_box, table_frame)
-        self.editor = tk.Text(result_box, height=2, wrap="word", font=("Yu Gothic UI", 11), undo=True)
+        self.editor = tk.Text(result_box, height=2, wrap="word", font=(FONT, 11), undo=True)
         style_text(self.editor)
         self.editor.pack(side="bottom", fill="x", before=editor_hint, pady=(7, 0))
         self.editor.configure(state="disabled")
@@ -230,11 +234,6 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         output_box.grid(row=5, column=0, sticky="ew", pady=(10, 0))
         output_heading = section_title(output_box, "03", "書き出し")
         output_heading.pack(fill="x", pady=(0, 6))
-        ttk.Button(output_heading, text="保存フォルダー", command=self.open_folder).pack(side="right")
-        ttk.Button(output_heading, text="使い方", command=self.help).pack(side="right", padx=8)
-        from data_backup_ui import open_backup
-        self.backup_button = ttk.Button(output_heading, text="バックアップ・復元", command=lambda: open_backup(self))
-        self.backup_button.pack(side="right", padx=(0, 8))
         self.caption_position_combo = ttk.Combobox(output_heading, textvariable=self.caption_position, width=6, state="readonly")
         self.caption_position_combo.pack(side="right", padx=(6, 14))
         ttk.Label(output_heading, text="位置").pack(side="right")
@@ -256,6 +255,11 @@ class App(SpeakerMemoryControls, SpeakerControls, CorrectionControls, ContextCon
         self.play_button.pack(side="right")
         footer = ttk.Frame(outer, style="App.TFrame")
         footer.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        from data_backup_ui import open_backup
+        ttk.Button(footer, text="保存フォルダー", command=self.open_folder).pack(side="left")
+        self.backup_button = ttk.Button(footer, text="バックアップ・復元", command=lambda: open_backup(self))
+        self.backup_button.pack(side="left", padx=6)
+        ttk.Button(footer, text="使い方", command=self.help).pack(side="left")
         from update_ui import open_update
         self.update_button = ttk.Button(footer, text="アプリを更新…", command=lambda: open_update(self))
         self.update_button.pack(side="right")

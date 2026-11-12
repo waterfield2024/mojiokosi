@@ -412,6 +412,14 @@ def main():
                     assert titles == ['今回の会議', '以前の会議']
                     text = click_record('以前の会議')
                     assert '佐藤　00:00:24.000' in text and text.endswith('京都に戻ります。')
+                    from ui_theme import palette
+                    for mode in ('dark', 'light'):
+                        app.theme_controller.set_mode(mode)
+                        root.update()
+                        assert research.record_text.get('1.0', 'end-1c') == text
+                        assert research.record_text.tag_ranges('speaker')
+                        assert research.record_text.tag_cget('speaker', 'foreground') == palette(research)['accent']
+                        assert app.start_button.cget('image') and app.start_button.winfo_ismapped()
                 finally:
                     resume_index.set()
             wait_for(lambda: research.ready)

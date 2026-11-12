@@ -12,10 +12,9 @@ from engine import timestamp, youtube_url, resolve_cached_audio
 class SpeakerControls:
     def build_speaker_options(self, settings):
         self.num_speakers = tk.StringVar(value="自動")
-        ttk.Label(settings, text="話者：自動判別").pack(side="left", padx=(16, 6))
-        ttk.Label(settings, text="人数").pack(side="left", padx=(6, 4))
-        ttk.Combobox(settings, textvariable=self.num_speakers,
-                     values=["自動"] + [str(i) for i in range(1, 31)], state="readonly", width=5).pack(side="left")
+        count = ttk.Combobox(settings, textvariable=self.num_speakers, state="readonly", width=6,
+                             values=["自動"] + [str(i) for i in range(1, 31)])
+        count.grid(row=1, column=2, sticky="ew", padx=(0, 14))
 
     def build_speaker_editor(self, parent, table_frame):
         bar = ttk.Frame(parent)

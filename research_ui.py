@@ -14,7 +14,7 @@ from research_library import (KINDS, ORDERS, PAGE_SIZE, QUESTION_LIMIT, REASON_F
                               ResearchSession, SemanticSearchError, collect_sources, import_text, save_article, summarize)
 from research_vectors import load_encoder
 from transcript_library import load_records
-from ui_theme import palette, style_text
+from ui_theme import FONT, palette, style_text, window_heading
 
 
 _summary_lock = threading.Lock()
@@ -191,14 +191,15 @@ class ResearchWindow(tk.Toplevel):
         self.ready = False
         self.refresh_number = 0
         self.last_request = (session.question, session.kind, session.order, session.hybrid) if session.question else None
-        frame = ttk.Frame(self, padding=12)
+        top = window_heading(self, '過去の発言・記事を調べる')
+        ttk.Button(top, text='記事を追加…', style='Mast.TButton', command=lambda: article_dialog(self)).pack(side='right')
+        frame = ttk.Frame(self, padding=(12, 10), style='App.TFrame')
         frame.pack(fill='both', expand=True)
-        top = ttk.Frame(frame)
-        top.pack(fill='x')
-        ttk.Label(top, text='過去の発言・記事を調べる', font=('Yu Gothic UI', 14, 'bold')).pack(side='left')
-        ttk.Button(top, text='記事を追加…', command=lambda: article_dialog(self)).pack(side='right')
-        ttk.Label(frame, text='質問やキーワードを入力　例「昨年、予算について何と言っていた？」').pack(anchor='w', pady=(10, 3))
-        bar = ttk.Frame(frame)
+        search_card = ttk.Frame(frame, style='Card.TFrame', padding=(12, 8))
+        search_card.pack(fill='x')
+        ttk.Label(search_card, text='質問やキーワードを入力　例「昨年、予算について何と言っていた？」',
+                  style='Sub.TLabel').pack(anchor='w', pady=(0, 4))
+        bar = ttk.Frame(search_card)
         bar.pack(fill='x')
         self.question = ttk.Entry(bar)
         self.question.insert(0, session.question)
@@ -210,38 +211,39 @@ class ResearchWindow(tk.Toplevel):
             box.set(value)
             box.pack(side='left', padx=(5, 0))
             box.bind('<<ComboboxSelected>>', self.search)
-        self.search_btn = ttk.Button(bar, text='調べる', command=self.search, state='disabled')
+        self.search_btn = ttk.Button(bar, text='調べる', style='Accent.TButton', command=self.search, state='disabled')
         self.search_btn.pack(side='left', padx=(5, 0))
-        options = ttk.Frame(frame)
+        options = ttk.Frame(search_card)
         options.pack(fill='x', pady=(5, 0))
         self.hybrid = tk.BooleanVar(self, value=session.hybrid)
         ttk.Checkbutton(options, text='意味の近い表現も探す', variable=self.hybrid,
                         command=lambda: self.search() if self.question.get().strip() else None).pack(side='left')
         self.vector_status = tk.StringVar(self, value='初回の検索で意味検索モデルを準備します。')
-        ttk.Label(options, textvariable=self.vector_status, wraplength=520).pack(side='left', padx=8)
+        ttk.Label(options, textvariable=self.vector_status, style='Sub.TLabel', wraplength=520).pack(side='left', padx=8)
         self.status = tk.StringVar(self)
         from transcript_library_ui import record_table
         split = ttk.Panedwindow(frame, orient='horizontal')
         split.pack(fill='both', expand=True, pady=(8, 0))
-        sidebar = ttk.Frame(split, padding=(0, 0, 6, 0))
+        sidebar = ttk.Frame(split, style='Card.TFrame', padding=(8, 7))
         split.add(sidebar, weight=0)
         self.catalog_title = tk.StringVar(self, value='記録一覧（読み込み中…）')
-        ttk.Label(sidebar, textvariable=self.catalog_title).pack(anchor='w', pady=(0, 5))
+        ttk.Label(sidebar, textvariable=self.catalog_title, style='Section.TLabel').pack(anchor='w', pady=(0, 7))
         font = ttk.Style(self).lookup('Treeview', 'font') or 'TkDefaultFont'
         date_width = int(self.tk.call('font', 'measure', font, '2026-12-31')) + 12
         self.record_list = record_table(sidebar, [('記録名', 155), ('種類', 50), ('日付', date_width)], 12)
         self.record_list.column('記録名', stretch=True)
         self.record_list.column('日付', stretch=False)
         self.record_list.bind('<<TreeviewSelect>>', self.read_record)
-        right = ttk.Frame(split, padding=(6, 0, 0, 0))
+        right = ttk.Frame(split, style='Card.TFrame', padding=(9, 7))
         split.add(right, weight=1)
         self.results_view = ttk.Frame(right)
         self.results_view.pack(fill='both', expand=True)
         self.reader = ttk.Frame(right)
         ttk.Button(self.reader, text='検索結果に戻る', command=self.show_results).pack(anchor='w', pady=(0, 5))
-        self.record_text = tk.Text(self.reader, wrap='word', width=32, height=12, state='disabled', padx=12, pady=8)
+        self.record_text = tk.Text(self.reader, wrap='word', width=32, height=12, state='disabled', font=(FONT, 11))
         style_text(self.record_text)
-        self.record_text.tag_configure('title', font=('Yu Gothic UI', 13, 'bold'), spacing3=4)
+        self.record_text._whisper_refresh_tags = self.style_reader
+        self.style_reader()
         record_scroll = ttk.Scrollbar(self.reader, command=self.record_text.yview)
         self.record_text.configure(yscrollcommand=record_scroll.set)
         record_scroll.pack(side='right', fill='y')
@@ -314,7 +316,7 @@ class ResearchWindow(tk.Toplevel):
         self.ai_btn.pack(side='right', padx=5)
         self.detail = tk.Text(lower, height=8, wrap='word', state='disabled', padx=8, pady=5)
         style_text(self.detail)
-        self.detail.tag_configure('quoted', font=('Yu Gothic UI', 10, 'bold'))
+        self.detail.tag_configure('quoted', font=(FONT, 10, 'bold'))
         self.detail.bind('<ButtonRelease-1>', self.follow_citation)
         scroll = ttk.Scrollbar(lower, command=self.detail.yview)
         self.detail.configure(yscrollcommand=scroll.set)
@@ -387,21 +389,34 @@ class ResearchWindow(tk.Toplevel):
         else:
             self.show_results()
 
+    def style_reader(self):
+        colors = palette(self)
+        self.record_text.configure(highlightthickness=0, padx=14, pady=10, spacing2=3)
+        self.record_text.tag_configure('title', font=(FONT, 16, 'bold'), spacing3=5)
+        self.record_text.tag_configure('meta', font=(FONT, 10), foreground=colors['muted'])
+        self.record_text.tag_configure('speaker', font=(FONT, 10, 'bold'), foreground=colors['accent'], spacing3=3)
+
     def read_record(self, event=None):
         selected = self.record_list.selection()
         if not selected:
             return
         src = self.sources[selected[0]]
-        if src.kind == '発言':
-            body = '\n\n'.join(f'{location(src, row)}\n{p.text}' for row, p in enumerate(src.passages))
-            body = body or '発言はありません。'
-        else:
-            body = '\n\n'.join(p.text for p in src.passages)
         metadata = '　'.join(filter(None, (src.kind, src.day or '日付不明', src.credit)))
         self.record_text.configure(state='normal')
         self.record_text.delete('1.0', 'end')
         self.record_text.insert('end', src.title + '\n', 'title')
-        self.record_text.insert('end', metadata + '\n\n' + body)
+        self.record_text.insert('end', metadata + '\n\n', 'meta')
+        if src.kind == '発言' and src.passages:
+            # Send tagged text in batches even for recordings with thousands of speakers' turns.
+            for start in range(0, len(src.passages), 200):
+                parts = []
+                for row, passage in enumerate(src.passages[start:start + 200], start):
+                    parts.extend((location(src, row) + '\n', 'speaker', passage.text, ()))
+                    if row + 1 < len(src.passages):
+                        parts.extend(('\n\n', ()))
+                self.record_text.insert('end', *parts)
+        else:
+            self.record_text.insert('end', '\n\n'.join(p.text for p in src.passages) or '発言はありません。', ())
         self.record_text.configure(state='disabled')
         self.record_text.yview_moveto(0)
         self.results_view.pack_forget()

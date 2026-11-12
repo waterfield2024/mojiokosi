@@ -12,7 +12,7 @@ from comparison_waveform_ui import RangeWaveform
 from result_media import result_file
 from noun_search import load_synsets, noun_key
 from transcript_library import index_nouns, load_records, record_playback_target, search_nouns
-from ui_theme import palette, style_text
+from ui_theme import palette, style_text, window_heading
 
 
 def scan_library(root, events, stop, snapshot=None):
@@ -42,7 +42,7 @@ def record_table(parent, columns, height):
     table = ttk.Treeview(frame, columns=[name for name, _ in columns], show='headings',
                          selectmode='browse', height=height)
     for name, width in columns:
-        table.heading(name, text=name)
+        table.heading(name, text=name, anchor='w')
         table.column(name, width=width, minwidth=50, stretch=name == columns[-1][0])
     scroll = ttk.Scrollbar(frame, command=table.yview)
     table.configure(yscrollcommand=scroll.set)
@@ -90,15 +90,13 @@ class TranscriptLibrary(tk.Toplevel):
         self.audio_ranges = {}
         self.range_key = self.range_duration = None
 
+        header = window_heading(self, '保存した記録')
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill='both', expand=True)
-        header = ttk.Frame(outer)
-        header.pack(fill='x', pady=(0, 8))
-        ttk.Label(header, text='保存した記録', font=('Yu Gothic UI', 15, 'bold')).pack(side='left')
-        self.research_btn = ttk.Button(header, text='過去の発言・記事を調べる…', command=self.open_research, state='disabled')
+        self.research_btn = ttk.Button(header, text='過去の発言・記事を調べる…', style='Mast.TButton', command=self.open_research, state='disabled')
         self.research_btn.pack(side='left', padx=10)
-        ttk.Button(header, text='ファイルから開く…', command=self.open_file).pack(side='right')
-        self.edit = ttk.Button(header, text='メイン画面で編集', command=self.edit_record, state='disabled')
+        ttk.Button(header, text='ファイルから開く…', style='Mast.TButton', command=self.open_file).pack(side='right')
+        self.edit = ttk.Button(header, text='メイン画面で編集', style='Mast.TButton', command=self.edit_record, state='disabled')
         self.edit.pack(side='right', padx=6)
         self.status = tk.StringVar(value='記録を読み込み中…')
         footer = ttk.Frame(outer)
