@@ -1,13 +1,15 @@
 from contextlib import closing
 from datetime import date
+import importlib.util
 import json
 from pathlib import Path
 import queue
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from janome.tokenizer import Tokenizer
@@ -21,6 +23,23 @@ class ResearchTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tokenizer = Tokenizer()
+
+    def test_search_worker_skips_optional_sentencepiece_even_when_installed(self):
+        from research_vectors import _serve
+        connection = MagicMock()
+        connection.recv.side_effect = EOFError
+        with tempfile.TemporaryDirectory() as temp, patch.dict(sys.modules), patch.object(sys, 'path', [temp, *sys.path]):
+            sys.modules.pop('sentencepiece', None)
+            (Path(temp) / 'sentencepiece.py').write_text('raise RuntimeError("unexpected native import")', 'utf-8')
+            self.assertIsNotNone(importlib.util.find_spec('sentencepiece'))
+
+            def load_model(folder):
+                if importlib.util.find_spec('sentencepiece') is not None:
+                    __import__('sentencepiece')
+
+            with patch('research_vectors.JapaneseEncoder', side_effect=load_model):
+                _serve(connection, Path(temp))
+            connection.send.assert_called_once_with((True, None))
 
     def test_portable_research_session_and_invalid_preferences(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict('os.environ', {'WHISPER_USER_DATA_DIR': temp}):

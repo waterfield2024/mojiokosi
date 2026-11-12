@@ -1,6 +1,7 @@
 """Japanese retrieval embeddings, stored and computed on the local machine."""
 import multiprocessing
 from pathlib import Path
+import sys
 import threading
 
 
@@ -37,6 +38,9 @@ class JapaneseEncoder:
 
 def _serve(connection, folder):
     # Import the ML runtime in a child so it cannot collect Tk objects on a worker thread.
+    # Ruri ships a complete tokenizer.json. Keep Transformers from probing the optional
+    # native SentencePiece module in this dedicated process each time a search window opens.
+    sys.modules.setdefault('sentencepiece', None)
     with connection:
         try:
             encoder = JapaneseEncoder(folder)
