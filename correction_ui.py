@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
-from corrections import DEFAULT_PATH, load_settings, normalize_rules, replace_segments, save_settings
+from corrections import (DEFAULT_PATH, load_dictionary_file, load_settings, normalize_rules,
+                         replace_segments, save_settings)
+from ui_theme import FONT
 
 
 class CorrectionControls:
@@ -161,8 +164,8 @@ class DictionaryDialog(tk.Toplevel):
         self.app = app
         self.rules = deepcopy(app.correction_settings["rules"])
         self.title("誤変換辞書")
-        self.geometry("740x500")
-        self.minsize(660, 460)
+        self.geometry("740x550")
+        self.minsize(660, 510)
         self.transient(app.root)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -206,8 +209,19 @@ class DictionaryDialog(tk.Toplevel):
         ttk.Button(row, text="選択を削除", command=self.delete_rule).pack(side="left")
         ttk.Label(frame, text="例：誤った固有名詞 → 正しい名前。置換後を空にすると削除します。",
                   wraplength=610).grid(row=5, column=0, sticky="w")
+        files = ttk.Frame(frame)
+        files.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        self.export_button = ttk.Button(files, text="ファイルに保存…", command=self.export_file)
+        self.export_button.pack(side="left")
+        self.import_button = ttk.Button(files, text="ファイルから読み込み…", command=self.import_file)
+        self.import_button.pack(side="left", padx=6)
+        self.file_status = tk.StringVar(self, value="JSONファイルで別の場所やPCに辞書を持ち運べます。")
+        self.file_status_label = ttk.Label(frame, textvariable=self.file_status, style="Sub.TLabel", wraplength=610)
+        self.file_status_label.grid(row=7, column=0, sticky="ew", pady=(5, 0))
+        self.file_status_label.bind("<Configure>",
+                                   lambda e: self.file_status_label.configure(wraplength=max(200, e.width - 8)))
         bottom = ttk.Frame(frame)
-        bottom.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        bottom.grid(row=8, column=0, sticky="ew", pady=(10, 0))
         self.save_button = ttk.Button(bottom, text="保存して閉じる", command=self.save)
         self.save_button.pack(side="left")
         self.apply_button = ttk.Button(bottom, text="保存して今の結果に適用", command=lambda: self.save(apply_now=True),
@@ -243,11 +257,11 @@ class DictionaryDialog(tk.Toplevel):
         self.after_text.set("")
         self.before_entry.focus_set()
 
-    def store_editor(self):
+    def editor_candidate(self):
         selected = self.tree.selection()
         rule = {"before": self.before.get(), "after": self.after_text.get()}
         if not selected and not rule["before"] and not rule["after"]:
-            return
+            return normalize_rules(self.rules), None
         candidate = deepcopy(self.rules)
         if selected:
             index = int(selected[0])
@@ -255,8 +269,12 @@ class DictionaryDialog(tk.Toplevel):
         else:
             index = len(candidate)
             candidate.append(rule)
-        self.rules = normalize_rules(candidate)
-        self.refresh(index)
+        return normalize_rules(candidate), index
+
+    def store_editor(self):
+        self.rules, index = self.editor_candidate()
+        if index is not None:
+            self.refresh(index)
 
     def register_rule(self):
         try:
@@ -270,6 +288,74 @@ class DictionaryDialog(tk.Toplevel):
             del self.rules[int(selected[0])]
             self.new_rule()
             self.refresh()
+
+    def export_file(self):
+        path = filedialog.asksaveasfilename(parent=self, title="誤変換辞書をファイルに保存",
+                                           initialfile="Whisper-誤変換辞書.json", defaultextension=".json",
+                                           filetypes=[("誤変換辞書（JSON）", "*.json")])
+        if not path:
+            return
+        try:
+            rules, _ = self.editor_candidate()
+            if Path(path).resolve() == Path(self.app.correction_path).resolve():
+                raise ValueError("アプリの辞書本体は「保存して閉じる」で保存できます。書き出し先には別の場所を選んでください。")
+            save_settings({"version": 1, "auto_apply": self.enabled.get(), "rules": rules}, path)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("ファイルに保存できません", str(exc), parent=self)
+            return
+        self.file_status.set(f"{len(rules)}件を保存しました。\n{path}")
+
+    def import_file(self):
+        path = filedialog.askopenfilename(parent=self, title="誤変換辞書をファイルから読み込み",
+                                         filetypes=[("誤変換辞書（JSON）", "*.json")])
+        if not path:
+            return
+        try:
+            incoming = load_dictionary_file(path)
+            current, _ = self.editor_candidate()
+        except (OSError, ValueError, RecursionError) as exc:
+            messagebox.showerror("辞書を読み込めません", str(exc), parent=self)
+            return
+        merged = {rule["before"]: rule for rule in current}
+        added = sum(rule["before"] not in merged for rule in incoming["rules"])
+        changed = sum(rule["before"] in merged and merged[rule["before"]]["after"] != rule["after"]
+                      for rule in incoming["rules"])
+        merged.update((rule["before"], rule) for rule in incoming["rules"])
+        dialog = tk.Toplevel(self)
+        dialog.title("辞書の読み込み方法")
+        dialog.transient(self)
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"{Path(path).name}（{len(incoming['rules'])}件）",
+                  font=(FONT, 11, "bold"), wraplength=480).pack(anchor="w")
+        ttk.Label(frame, text=f"追加・更新　新規 {added}件 ／ 置換先の更新 {changed}件\n"
+                  f"入れ替え　現在の{len(current)}件を、ファイルの{len(incoming['rules'])}件に変更",
+                  wraplength=480).pack(anchor="w", pady=(10, 6))
+        ttk.Label(frame, text="読み込んだ一覧を確認し、「保存して閉じる」でアプリに反映します。",
+                  wraplength=480).pack(anchor="w")
+
+        def close():
+            dialog.destroy()
+            self.grab_set()
+
+        def accept(merge):
+            self.rules = list(merged.values()) if merge else incoming["rules"]
+            if not merge:
+                self.enabled.set(incoming["auto_apply"])
+            self.new_rule()
+            self.refresh()
+            self.file_status.set(f"{Path(path).name}から読み込みました。\n"
+                                 "一覧を確認して「保存して閉じる」で反映、キャンセルで取り消せます。")
+            close()
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(12, 0))
+        ttk.Button(buttons, text="追加・更新する", style="Accent.TButton",
+                   command=lambda: accept(True)).pack(side="left")
+        ttk.Button(buttons, text="入れ替える", command=lambda: accept(False)).pack(side="left", padx=6)
+        ttk.Button(buttons, text="キャンセル", command=close).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", close)
+        dialog.grab_set()
 
     def save(self, apply_now=False):
         try:

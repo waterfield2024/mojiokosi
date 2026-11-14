@@ -50,6 +50,13 @@ def load_settings(path=DEFAULT_PATH):
     return normalize_settings(json.loads(path.read_text(encoding="utf-8-sig")))
 
 
+def load_dictionary_file(path):
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict) or "rules" not in data:
+        raise ValueError("誤変換辞書のJSONファイルを選んでください。")
+    return normalize_settings(data)
+
+
 def save_settings(settings, path=DEFAULT_PATH):
     data = normalize_settings(settings)
     path = Path(path)

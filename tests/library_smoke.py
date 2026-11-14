@@ -12,6 +12,113 @@ import wave
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+def check_dictionary_files(app, root, folder):
+    from copy import deepcopy
+    from tkinter import ttk
+    from corrections import load_dictionary_file, load_settings, save_settings
+    from correction_ui import DictionaryDialog
+
+    original = deepcopy(app.correction_settings)
+    base = {"version": 1, "auto_apply": True, "rules": [{"before": "旧表記", "after": "正しい表記"}]}
+    app.correction_settings = save_settings(base, app.correction_path)
+    app.update_correction_controls()
+    export = folder / "別PC用の辞書.json"
+    incoming = folder / "読込用.json"
+    draft = {"before": "文字お越し", "after": "文字起こし"}
+    save_settings({"auto_apply": False, "rules": [{"before": "旧表記", "after": "新表記"},
+                                                  {"before": "言いよどみ", "after": ""}]}, incoming)
+
+    def open_dialog():
+        app.dictionary_button.invoke()
+        root.update()
+        dialog = app.dictionary_window
+        assert isinstance(dialog, DictionaryDialog)
+        return dialog
+
+    def choose(dialog, label):
+        def find(widget):
+            if isinstance(widget, ttk.Button) and widget.cget("text") == label:
+                return widget
+            for child in widget.winfo_children():
+                if result := find(child):
+                    return result
+        button = find(dialog)
+        assert button is not None
+        button.invoke()
+        root.update()
+
+    def read_file(dialog, path):
+        with patch("correction_ui.filedialog.askopenfilename", return_value=str(path)):
+            dialog.import_button.invoke()
+        root.update()
+
+    dialog = open_dialog()
+    try:
+        dialog.before.set(draft["before"])
+        dialog.after_text.set(draft["after"])
+        with patch("correction_ui.filedialog.asksaveasfilename", return_value=str(export)):
+            dialog.export_button.invoke()
+        assert load_dictionary_file(export)["rules"] == base["rules"] + [draft]
+        assert load_settings(app.correction_path) == base
+        assert dialog.rules == base["rules"] and dialog.before.get() == draft["before"]
+        assert str(export) in dialog.file_status.get()
+        root.update()
+        for mode in ("dark", "light"):
+            app.theme_controller.set_mode(mode)
+            dialog.geometry("660x510")
+            root.update()
+            for button in (dialog.export_button, dialog.import_button, dialog.save_button, dialog.apply_button):
+                assert button.winfo_ismapped()
+                assert button.winfo_rooty() + button.winfo_height() <= dialog.winfo_rooty() + dialog.winfo_height()
+
+        with patch("correction_ui.filedialog.asksaveasfilename", return_value=""):
+            dialog.export_button.invoke()
+        with patch("correction_ui.filedialog.asksaveasfilename", return_value=str(app.correction_path)), \
+                patch("correction_ui.messagebox.showerror") as error:
+            dialog.export_button.invoke()
+            error.assert_called_once()
+        invalid = folder / "unrelated.json"
+        invalid.write_text('{"segments":[]}', encoding="utf-8")
+        with patch("correction_ui.messagebox.showerror") as error:
+            read_file(dialog, invalid)
+            error.assert_called_once()
+        assert dialog.rules == base["rules"] and dialog.before.get() == draft["before"]
+        read_file(dialog, incoming)
+        confirm = next(w for w in dialog.winfo_children() if isinstance(w, tk.Toplevel))
+        choose(confirm, "キャンセル")
+        assert root.grab_current() == dialog and dialog.rules == base["rules"]
+        read_file(dialog, incoming)
+        confirm = next(w for w in dialog.winfo_children() if isinstance(w, tk.Toplevel))
+        choose(confirm, "追加・更新する")
+        assert dialog.rules == [{"before": "旧表記", "after": "新表記"}, draft,
+                                {"before": "言いよどみ", "after": ""}]
+        assert dialog.enabled.get() and load_settings(app.correction_path) == base
+        choose(dialog, "キャンセル")
+        assert app.correction_settings == base
+
+        dialog = open_dialog()
+        read_file(dialog, incoming)
+        confirm = next(w for w in dialog.winfo_children() if isinstance(w, tk.Toplevel))
+        choose(confirm, "入れ替える")
+        assert not dialog.enabled.get()
+        assert dialog.rules == load_dictionary_file(incoming)["rules"]
+        with patch("correction_ui.save_settings", side_effect=OSError("write failure")), \
+                patch("correction_ui.messagebox.showerror") as error:
+            dialog.save_button.invoke()
+            error.assert_called_once()
+        assert dialog.winfo_exists() and app.correction_settings == base
+        dialog.save_button.invoke()
+        assert app.correction_settings == load_dictionary_file(incoming)
+        dialog = open_dialog()
+        assert dialog.rules == app.correction_settings["rules"] and not dialog.enabled.get()
+        dialog.destroy()
+    finally:
+        if dialog.winfo_exists():
+            dialog.destroy()
+        app.correction_settings = save_settings(original, app.correction_path)
+        app.update_correction_controls()
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='whisper-library-') as temp:
         os.environ['WHISPER_USER_DATA_DIR'] = str(Path(temp) / 'UserData')
@@ -59,6 +166,7 @@ def main():
             return window
 
         try:
+            check_dictionary_files(app, root, Path(temp))
             root.update()
             saved, appearance = app.open_button, app.appearance_combo
             assert saved.winfo_ismapped() and saved.master is appearance.master, (root.state(), root.geometry(), saved.winfo_geometry())
